@@ -18,15 +18,65 @@ Built with PySide6 and bleak; protocol and repeat matching ported from the CYD M
   Windows, or a `data` folder beside the packaged app); reconnects when the link drops
 - Runs on Linux (BlueZ) and Windows 10 1809+ (WinRT); pairing asks for the node's PIN in the app on both
 
+## Install
+
+You need a computer with Bluetooth LE and a node running MeshCore **companion** firmware with Bluetooth enabled.
+To try the app without a radio, use `--sim` below.
+
+### Download a release
+
+If there's a build on the [Releases page](https://github.com/Manthany2000/meshcore-desktop/releases), download it,
+unpack it, and run `meshcore-desktop` (Linux) or `meshcore-desktop.exe` (Windows). Nothing else needs installing.
+
+### Install script for Linux
+
+You need Python 3.12 or newer, Git and BlueZ. This sets everything up for your user, without root, and adds the app
+to your menu:
+
 ```
-python3 -m venv --system-site-packages .venv && .venv/bin/pip install -r requirements.txt
+curl -fsSL https://raw.githubusercontent.com/Manthany2000/meshcore-desktop/main/install.sh | bash
+```
+
+It downloads to `~/meshcore-desktop`. If you already have a copy, run `./install.sh` from inside it.
+
+### Run from source on Linux
+
+You need the same three things.
+
+```
+git clone https://github.com/Manthany2000/meshcore-desktop.git
+cd meshcore-desktop
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+./meshcore-desktop --sim      # try it with a simulated node
+```
+
+On Debian or Ubuntu, you may first need `sudo apt install git python3-venv libxcb-cursor0`.
+
+### Run from source on Windows
+
+You need Windows 10 1809 or newer, Python 3.12 or newer, and Git.
+
+```
+git clone https://github.com/Manthany2000/meshcore-desktop.git
+cd meshcore-desktop
+py -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python -m meshcore_desktop --sim
+```
+
+## Usage
+
+```
 ./meshcore-desktop            # pick a node from the scan
 ./meshcore-desktop --sim      # a simulated node, no radio needed
 ./meshcore-desktop --address AA:BB:CC:DD:EE:FF
 .venv/bin/python -m pytest tests
 ```
 
-The node takes one BLE client at a time: disconnect the phone app or the CYD first.
+On Windows, use `.venv\Scripts\python -m meshcore_desktop` in place of `./meshcore-desktop`.
+
+The node takes one BLE client at a time, so disconnect the phone app or anything else using it first.
 The first connection pairs: the app asks for the PIN shown on the node's screen.
 
 Repeat counts and paths come from the node's raw packet log (push 0x88), so messages that
