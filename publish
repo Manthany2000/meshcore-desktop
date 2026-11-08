@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Sends this project to GitHub. Tests must pass first.
+#   ./publish "what changed"                  commit and push
+#   ./publish --release v0.2 "what changed"   also build the downloads and post a Release
+set -euo pipefail
+cd "$(dirname "$0")"
+
+tag=""
+if [[ "${1:-}" == "--release" ]]; then
+  tag="${2:-}"
+  [[ "$tag" =~ ^v[0-9]+(\.[0-9]+)*$ ]] || { echo "A release needs a version like v0.2"; exit 1; }
+  shift 2
+fi
+msg="${1:-}"
+
+[[ "$(git branch --show-current)" == main ]] || { echo "Switch to the main branch first."; exit 1; }
+if [[ -n "$tag" ]] && git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+  echo "$tag has already been released."; exit 1
+fi
+
+echo "Running tests..."
+.venv/bin/python -m pytest -q tests
+
+git add -A
+if ! git diff --cached --quiet; then
+  [[ -n "$msg" ]] || { git reset -q; echo 'Say what changed: ./publish "what changed"'; exit 1; }
+  # The repo is public: stop before anything personal goes up.
+  if git diff --cached --name-only | grep -E '\.db$|^data/' ||
+     git diff --cached | grep -E '^\+.*(/home/[a-z]|([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})' | grep -v 'AA:BB:CC:DD:EE:FF'; then
+    git reset -q
+    echo "Stopped: the lines above look personal (a saved database, home path or device address)."
+    exit 1
+  fi
+  git commit -q -m "$msg"
+fi
+
+git push -u origin main
+if [[ -n "$tag" ]]; then
+  git tag "$tag"
+  git push origin "$tag"
+  echo "GitHub is building $tag. It appears under Releases when done."
+fi

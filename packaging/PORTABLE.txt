@@ -1,0 +1,17 @@
+MeshCore Desktop
+================
+
+Run meshcore-desktop (Linux) or meshcore-desktop.exe (Windows) from this folder.
+Nothing needs installing. Add --sim to try it with a simulated node.
+
+Where messages and settings go:
+  - If there is a folder named "data" next to the program, everything is kept
+    in there, so the whole folder can move between computers (e.g. a USB stick).
+  - Otherwise: ~/.local/share/meshcore-desktop on Linux,
+    %LOCALAPPDATA%\MeshCore Desktop on Windows.
+
+The node takes one Bluetooth client at a time: disconnect the phone app first.
+The first connection pairs, and the app asks for the PIN shown on the node's screen.
+
+Linux needs BlueZ (every desktop distro has it). Windows needs Windows 10 1809 or newer
+and Bluetooth LE.

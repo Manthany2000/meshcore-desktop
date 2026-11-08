@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+dist/
+build/
+*.db
+/data/
+# Has this machine's path in it; packaging/ holds the shared one.
+/meshcore-desktop.desktop

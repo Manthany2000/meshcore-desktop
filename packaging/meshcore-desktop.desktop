@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MeshCore Desktop
+Comment=Chat over a MeshCore companion node by Bluetooth
+Exec=meshcore-desktop
+Icon=meshcore-desktop
+Categories=Network;Chat;
+StartupWMClass=meshcore-desktop
+Terminal=false
