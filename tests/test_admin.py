@@ -149,3 +149,14 @@ def test_contact_flags():
     b = bytearray(t._contact_frame(t.contacts[0]))
     b[34] = 1
     assert P.decode(bytes(b)).contact.flags & 1
+
+
+def test_repeater_adverts(tmp_path):
+    async def go():
+        s, t = _session(tmp_path)
+        await s.start()
+        t.admins.add(KEY[:6])
+        assert (await s.cli(KEY, "advert")).msg.text == "OK - Advert sent"
+        assert (await s.cli(KEY, "advert.zerohop")).msg.text == "OK - zerohop advert sent"
+        await s.stop()
+    asyncio.run(go())

@@ -86,7 +86,7 @@ were queued on the node while nothing was connected have neither.
 
 In Contacts, right-click a repeater and choose **Manage repeater** to open the Repeater tab. Log in with its admin
 password to read its stats and run CLI commands; the guest password gets stats only. Once you're on its admin list, a
-blank password logs you back in. The Settings page edits name, repeating, TX power, flood and advert limits, location and owner info: read the current values, change them, and Apply. Passwords are never saved or logged. Commands that could cut you off from a remote
+blank password logs you back in. Zero-hop and Flood advert buttons make the repeater announce itself. The Settings page edits name, repeating, TX power, flood and advert limits, location and owner info: read the current values, change them, and Apply. Passwords are never saved or logged. Commands that could cut you off from a remote
 repeater, such as `reboot` or `password`, ask first. In the simulator the passwords are `admin` and `guest`, and
 Library Roof never answers.
 

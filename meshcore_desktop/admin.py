@@ -180,7 +180,17 @@ class RepeaterPanel(QWidget):
         v.addLayout(row)
         self.state = QLabel("")
         self.state.setWordWrap(True)
-        v.addWidget(self.state)
+        row = QHBoxLayout()
+        row.addWidget(self.state, 1)
+        self.advert_near = QPushButton("Zero-hop advert")
+        self.advert_near.setToolTip("The repeater announces itself to nodes that can hear it directly")
+        self.advert_near.clicked.connect(lambda: self.send_advert(False))
+        self.advert_flood = QPushButton("Flood advert")
+        self.advert_flood.setToolTip("The repeater announces itself across the whole mesh. Uses more airtime.")
+        self.advert_flood.clicked.connect(lambda: self.send_advert(True))
+        row.addWidget(self.advert_near)
+        row.addWidget(self.advert_flood)
+        v.addLayout(row)
 
         box = QGroupBox("Status")
         grid = QGridLayout(box)
@@ -283,6 +293,8 @@ class RepeaterPanel(QWidget):
         self.command.setEnabled(cli)
         self.send_btn.setEnabled(cli)
         self.presets.setEnabled(cli)
+        self.advert_near.setEnabled(cli)
+        self.advert_flood.setEnabled(cli)
         self.read_btn.setEnabled(cli)
         self.apply_btn.setEnabled(cli and bool(r.settings))
         for key, w in self.fields.items():
@@ -450,6 +462,22 @@ class RepeaterPanel(QWidget):
             self.command.remember(cmd)
         self._task(self._run(self.contact, cmd))
         return True
+
+    def send_advert(self, flood: bool):
+        c, kind = self.contact, "Flood" if flood else "Zero-hop"
+        self._say(f"Asking the repeater to send a {kind.lower()} advert…")
+        self._task(self._advert(c, "advert" if flood else "advert.zerohop", kind))
+
+    async def _advert(self, c: P.Contact, cmd: str, kind: str):
+        self._log(c, f"> {cmd}")
+        f = await self.win.session.cli(c.key, cmd)
+        if f is None or f.kind == "err":
+            self._log(c, "(no reply: it may or may not have sent one)")
+            self._report(c, f"No reply, so the advert may or may not have gone out. {self._failure(f)}", True)
+            return
+        self._log(c, f.msg.text)
+        ok = f.msg.text.startswith("OK")
+        self._report(c, f"{kind} advert sent." if ok else f"The repeater said: {f.msg.text}", not ok)
 
     def _log(self, c: P.Contact, line: str):
         if self._showing(c):

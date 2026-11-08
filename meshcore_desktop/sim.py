@@ -174,7 +174,7 @@ class SimTransport:
         else:
             reply = {"ver": "v1.11.0 (Build: 05-Nov-2026)", "clock": "12:00 - 8/11/2026 UTC", "board": "Heltec V3",
                      "neighbors": "A1B2C3D4:42:26\n99F0E1AA:310:-8",
-                     "advert": "OK - Advert sent"}.get(cmd, "Unknown command")
+                     "advert": "OK - Advert sent", "advert.zerohop": "OK - zerohop advert sent"}.get(cmd, "Unknown command")
         self.queue.append(self._dm(prefix, reply, self.clock_now(), txt=P.TXT_CLI))
         self._push(bytes([P.PUSH_MSG_WAITING]), 0.5)
 
