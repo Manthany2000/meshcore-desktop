@@ -1,10 +1,8 @@
 # MeshCore Desktop
 
 A desktop chat app for a MeshCore node running companion firmware, over Bluetooth LE.
-Built with PySide6 and bleak; protocol and repeat matching ported from the CYD MeshCore app.
 
-> **Early version.** Most features, including repeater management, have only been tested against the built-in
-> simulator so far (`--sim`), not on real radios. Windows builds are untested on real Windows.
+> **Early version.** All features have been tested on Linux ( Fedora build ) and work. Windows builds are untested on real Windows.
 
 ![MeshCore Desktop messages](docs/messages.png)
 
