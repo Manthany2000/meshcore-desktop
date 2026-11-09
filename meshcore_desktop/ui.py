@@ -219,7 +219,9 @@ class Bubble(QStyledItemDelegate):
         return m.is_channel and not m.outgoing
 
     def _maxw(self):
-        return max(160, int(self.view.viewport().width() * 0.68) - 2 * self.PAD)
+        # Narrow panels give bubbles more of the width, so the text keeps a usable line length.
+        vw = self.view.viewport().width()
+        return max(90, int(vw * (0.68 if vw > 500 else 0.8)) - 2 * self.PAD)
 
     def sizeHint(self, option, idx):
         m = idx.data(Qt.UserRole)
@@ -525,7 +527,6 @@ class MainWindow(QMainWindow):
         self.conv = ""
         self.reply_to: Message | None = None
         self.setWindowTitle("MeshCore Desktop")
-        self.resize(1250, 780)
         self._build()
         model.listeners.append(self._on_model)
         self.toaster = Toast(self)
@@ -540,9 +541,11 @@ class MainWindow(QMainWindow):
     # --- layout ----------------------------------------------------------------
 
     def _build(self):
+        # One row: the brand and the views on the left, the node and the link on the right,
+        # and everything occasional in the ⋯ menu.
         tb = self.addToolBar("Main")
         tb.setMovable(False)
-        tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        tb.setToolButtonStyle(Qt.ToolButtonTextOnly)
         mark = self.mark = QLabel()
         mark.setPixmap(theme.logo())
         mark.setContentsMargins(2, 0, 6, 0)
@@ -550,47 +553,47 @@ class MainWindow(QMainWindow):
         brand = QLabel("MeshCore", objectName="brand")
         brand.setContentsMargins(0, 0, 10, 0)
         tb.addWidget(brand)
+        spacer = QWidget()
+        spacer.setSizePolicy(spacer.sizePolicy().horizontalPolicy().Expanding,
+                             spacer.sizePolicy().verticalPolicy().Preferred)
+        self.views_anchor = tb.addWidget(spacer)  # the view chips go before it, once the workspace exists
+        self.batt_icon = QLabel()
+        tb.addWidget(self.batt_icon)
+        self.node_label = QLabel("", objectName="dim")
+        self.node_label.setContentsMargins(2, 0, 8, 0)
+        tb.addWidget(self.node_label)
+        self.state_label = QLabel("", objectName="pill")
+        self.state_label.setFixedHeight(26)
+        tb.addWidget(self.state_label)
         self.connect_act = QAction("Connect", self, triggered=self.choose_device)
         self.disconnect_act = QAction("Disconnect", self, triggered=self.disconnect)
         tb.addAction(self.connect_act)
         tb.widgetForAction(self.connect_act).setObjectName("primary")
         tb.addAction(self.disconnect_act)
-        self.unpair_act = QAction("Unpair", self, triggered=self.forget_pairing)
+
+        more = QToolButton(text="⋯", toolTip="More")
+        more.setObjectName("more")
+        more.setPopupMode(QToolButton.InstantPopup)
+        m = QMenu(more)
+        adv = self.advert_btn = m.addMenu("Send advert")
+        adv.addAction("Zero-hop (neighbours only)", lambda: self.run(self.session.advert(False), "Advert sent"))
+        adv.addAction("Flood (whole mesh)", lambda: self.run(self.session.advert(True), "Flood advert sent"))
+        self.unpair_act = m.addAction("Forget pairing…", self.forget_pairing)
         self.unpair_act.setToolTip("Forget this computer's Bluetooth pairing with the node")
-        tb.addAction(self.unpair_act)
-        tb.addSeparator()
-        adv = QToolButton()
-        adv.setText("Advert ▾")
-        adv.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        adv.setPopupMode(QToolButton.InstantPopup)
-        m = QMenu(adv)
-        m.addAction("Zero-hop (neighbours only)", lambda: self.run(self.session.advert(False), "Advert sent"))
-        m.addAction("Flood (whole mesh)", lambda: self.run(self.session.advert(True), "Flood advert sent"))
-        adv.setMenu(m)
-        self.advert_btn = adv
-        tb.addWidget(adv)
-        tb.addSeparator()
-        self.batt_icon = QLabel()
-        tb.addWidget(self.batt_icon)
-        self.node_label = QLabel("", objectName="dim")
-        tb.addWidget(self.node_label)
-        spacer = QWidget()
-        spacer.setSizePolicy(spacer.sizePolicy().horizontalPolicy().Expanding,
-                             spacer.sizePolicy().verticalPolicy().Preferred)
-        tb.addWidget(spacer)
-        self.compact_act = QAction("Compact", self, checkable=True, shortcut="Ctrl+M", toolTip="Tighter layout for small screens (Ctrl+M)",
+        m.addSeparator()
+        self.details_act = QAction("Message details", self, checkable=True, shortcut="Ctrl+I",
+                                   toggled=self._details_toggled)
+        m.addAction(self.details_act)
+        self.compact_act = QAction("Compact layout", self, checkable=True, shortcut="Ctrl+M",
                                    toggled=self.set_compact)
-        tb.addAction(self.compact_act)
-        accent = QToolButton(text="Accent ▾")
-        accent.setPopupMode(QToolButton.InstantPopup)
-        am = QMenu(accent)
+        m.addAction(self.compact_act)
+        am = m.addMenu("Accent colour")
         for name in theme.ACCENTS:
             am.addAction(name, lambda n=name: self.set_accent(n))
-        accent.setMenu(am)
-        tb.addWidget(accent)
-        self.state_label = QLabel("", objectName="pill")
-        self.state_label.setFixedHeight(26)
-        tb.addWidget(self.state_label)
+        more.setMenu(m)
+        self.addAction(self.details_act)  # so the shortcuts work with the menu closed
+        self.addAction(self.compact_act)
+        tb.addWidget(more)
 
         split = QSplitter()
         split.setHandleWidth(1)
@@ -604,7 +607,7 @@ class MainWindow(QMainWindow):
         # Left: chats and contacts.
         self.tabs = QTabWidget(objectName="sidebar")
         self.tabs.setAttribute(Qt.WA_StyledBackground)
-        self.tabs.setMinimumWidth(330)
+        self.tabs.setMinimumWidth(240)
         self.tabs.setDocumentMode(True)
         self.chats = QListWidget()
         self.chats.setItemDelegate(ChatRow(self.chats))
@@ -667,9 +670,9 @@ class MainWindow(QMainWindow):
         f.setPointSize(f.pointSize() + 3)
         f.setBold(True)
         self.title.setFont(f)
-        self.title.setContentsMargins(16, 12, 16, 0)
+        self.title.setContentsMargins(16, 10, 16, 0)
         self.subtitle = QLabel("", objectName="dim")
-        self.subtitle.setContentsMargins(16, 0, 16, 8)
+        self.subtitle.setContentsMargins(16, 0, 16, 6)
         mv.addWidget(self.title)
         mv.addWidget(self.subtitle)
         self.list_model = MessageList(self.model)
@@ -679,12 +682,15 @@ class MainWindow(QMainWindow):
         self.view.setItemDelegate(self.bubble)
         self.view.setResizeMode(QListView.Adjust)
         self.view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # bubbles wrap to the width instead
         self.view.setSelectionMode(QAbstractItemView.SingleSelection)
         self.view.setFrameShape(QFrame.NoFrame)
         self.view.setContextMenuPolicy(Qt.CustomContextMenu)
         self.view.customContextMenuRequested.connect(self._msg_menu)
-        self.view.doubleClicked.connect(lambda ix: self.reply(ix.data(Qt.UserRole)))
-        self.view.selectionModel().currentChanged.connect(lambda ix, _p: self._show_details(ix.data(Qt.UserRole)))
+        self.view.doubleClicked.connect(lambda ix: self._double_clicked(ix.data(Qt.UserRole)))
+        self.view.selectionModel().currentChanged.connect(lambda ix, _p: self._show_details(ix.data(Qt.UserRole), True))
+        self.view.setToolTip("Click a message for its path and repeats. Double-click or Ctrl+R to reply; "
+                             "with the map open, double-click traces the message's path on it.")
         self.list_model.rowsAboutToBeInserted.connect(self._remember_bottom)
         self.list_model.rowsInserted.connect(self._stick_bottom)
         mv.addWidget(self.view, 1)
@@ -724,13 +730,39 @@ class MainWindow(QMainWindow):
         self.dashboard = Dashboard(self.model)
         self.center.addTab(self.dashboard, "Dashboard")
         split.addWidget(self.center)
+        self.views_act = tb.insertWidget(self.views_anchor, self.center.chip_bar)
+        self.stack.currentChanged.connect(lambda _i: self.views_act.setVisible(self.stack.currentWidget() is self.split))
+        self.views_act.setVisible(False)  # nothing to show until a node connects
 
-        # Right: the selected message's path and repeaters.
+        # Right: the selected message's path and repeaters. Only there while a
+        # message is picked, so it doesn't cost a small screen anything otherwise.
+        box = self.details_box = QFrame(objectName="detailsBox")
+        box.setAttribute(Qt.WA_StyledBackground)
+        bv = QVBoxLayout(box)
+        bv.setContentsMargins(0, 0, 0, 0)
+        bv.setSpacing(0)
+        head = QHBoxLayout()
+        head.setContentsMargins(14, 8, 6, 0)
+        dt = QLabel("Message details")
+        f = dt.font()
+        f.setBold(True)
+        dt.setFont(f)
+        head.addWidget(dt, 1)
+        x = QToolButton(text="×", objectName="plain", toolTip="Close (Ctrl+I)")
+        x.setStyleSheet("padding: 0; min-width: 0; font-size: 16px; border-radius: 10px;")
+        x.setFixedSize(30, 26)
+        x.clicked.connect(lambda: self.details_act.setChecked(False))
+        head.addWidget(x)
+        bv.addLayout(head)
         self.details = QTextBrowser(objectName="details")
         self.details.setOpenLinks(False)
-        self.details.setMinimumWidth(250)
-        split.addWidget(self.details)
-        split.setSizes([340, 620, 290])
+        bv.addWidget(self.details, 1)
+        box.setMinimumWidth(230)
+        split.addWidget(box)
+        avail = self.screen().availableGeometry()
+        w, h = min(1250, avail.width() - 40), min(780, avail.height() - 40)
+        self.resize(w, h)
+        split.setSizes([280, w - 280, 0])
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
         split.setStretchFactor(2, 0)
@@ -775,10 +807,10 @@ class MainWindow(QMainWindow):
         self.center.set_compact(on)
         self.map_tab.set_compact(on)
         self._panes_changed()
-        self.tabs.setMinimumWidth(220 if on else 330)
+        self.tabs.setMinimumWidth(200 if on else 240)
         a, b, c = self.main_split.sizes()
-        side, details = 230 if on else 340, 0 if on else 290
-        self.main_split.setSizes([side, a + b + c - side - details, details])
+        side = 220 if on else 280
+        self.main_split.setSizes([side, a + b + c - side - c, c])
         self.chats.doItemsLayout()  # its rows change height
 
     def set_accent(self, name: str):
@@ -897,7 +929,7 @@ class MainWindow(QMainWindow):
         theme.set_tone(self.state_label, {"ready": "ok", "disconnected": "off"}.get(state, "busy"))
         ready = state == "ready"
         self.connect_act.setVisible(state == "disconnected")
-        self.disconnect_act.setEnabled(state != "disconnected")
+        self.disconnect_act.setVisible(state != "disconnected")
         self.unpair_act.setEnabled(bool(self.address) and self.address != SIM)
         self.advert_btn.setEnabled(ready)
         self.admin.link_changed(state)
@@ -1002,15 +1034,21 @@ class MainWindow(QMainWindow):
         if not s:
             self.node_label.setText("")
             return
-        bits = [f"<b style='color:{theme.current.text}'>{html.escape(s.name)}</b>", f"{s.freq:.3f} MHz SF{s.sf} BW{s.bw:g}"]
+        # The name and battery stay in view; the radio and firmware are a hover away.
+        short = [f"<b style='color:{theme.current.text}'>{html.escape(s.name)}</b>"]
+        full = [f"<b>{html.escape(s.name)}</b>", f"{s.freq:.3f} MHz · SF{s.sf} · BW {s.bw:g} kHz"]
         self.batt_icon.clear()
         if self.model.battery_mv:
-            self.batt_icon.setPixmap(battery_pixmap(P.batt_percent(self.model.battery_mv)))
-            bits.append(f"{P.batt_percent(self.model.battery_mv)}% · {self.model.battery_mv / 1000:.2f} V")
+            pct = P.batt_percent(self.model.battery_mv)
+            self.batt_icon.setPixmap(battery_pixmap(pct))
+            short.append(f"{pct}%")
+            full.append(f"Battery {pct}% · {self.model.battery_mv / 1000:.2f} V")
         di = self.model.device_info
         if di and di.fw:
-            bits.append(html.escape(di.fw))
-        self.node_label.setText(" &nbsp;·&nbsp; ".join(bits))
+            full.append("Firmware " + html.escape(di.fw))
+        self.node_label.setText(" &nbsp;".join(short))
+        self.node_label.setToolTip("<br>".join(full))
+        self.batt_icon.setToolTip(self.node_label.toolTip())
 
     # --- left side ------------------------------------------------------------------
 
@@ -1145,7 +1183,7 @@ class MainWindow(QMainWindow):
     # --- conversation -----------------------------------------------------------------
 
     def _panes_changed(self):
-        self.details.setVisible(0 in self.center.open_indexes() and not theme.compact)  # it's about the selected message
+        self.details_box.setVisible(0 in self.center.open_indexes() and self.details_act.isChecked())  # about the selected message
         self.settings.setValue("panes", ",".join(map(str, self.center.open_indexes())))
         self.settings.setValue("pane_layout", self.center.state())
 
@@ -1277,11 +1315,34 @@ class MainWindow(QMainWindow):
         menu.addAction("Copy text", lambda: QApplication.clipboard().setText(m.text))
         menu.exec(self.view.viewport().mapToGlobal(pos))
 
-    def _show_details(self, m: Message | None):
-        if not m:
-            self.details.setHtml("<p style='color:gray'>Select a message to see its path and the repeaters "
-                                 "that relayed it.<br><br>Double-click or Ctrl+R to reply.</p>")
+    def _details_toggled(self, on: bool):
+        self._panes_changed()  # shows it first: a hidden widget's splitter size doesn't stick
+        if on and self.details_box.isVisible() and self.main_split.sizes()[2] < 200:
+            a, b, c = self.main_split.sizes()
+            want = 300
+            self.main_split.setSizes([a, b + c - want, want])
+
+    def _double_clicked(self, m: Message | None):
+        """With the map open beside the messages, double-click traces the message on
+        it (the Trace message view); otherwise it replies, as it always has. Ctrl+R
+        replies either way."""
+        if m is None:
             return
+        if not self.center.is_open(self.map_tab):
+            self.reply(m)
+            return
+        problem = self.map_tab.trace(m)
+        if problem:
+            self.toast(problem, True)
+
+    def _show_details(self, m: Message | None, picked: bool = False):
+        """picked: the user chose this message, so open the details if closed."""
+        if not m:
+            self.details.setHtml(f"<p style='color:{theme.current.dim}'>Click a message to see its path and the "
+                                 "repeaters that relayed it.<br><br>Double-click or Ctrl+R to reply.</p>")
+            return
+        if picked and not self.details_act.isChecked():
+            self.details_act.setChecked(True)
         rows = [f"<h3>{'Sent' if m.outgoing else 'From ' + html.escape(m.sender)}</h3>",
                 f"<p>{time.strftime('%a', time.localtime(m.at))} {short_date(time.localtime(m.at))}, "
                 f"{time.strftime('%H:%M:%S', time.localtime(m.at))}"]

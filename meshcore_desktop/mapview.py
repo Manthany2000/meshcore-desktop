@@ -2,6 +2,7 @@
 tiles in a web view, fed from the model."""
 from __future__ import annotations
 
+import html
 import json
 import math
 import time
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox,
 from . import protocol as P
 from . import theme
 from .admin import STAT_ROWS
-from .dashboard import ME, NetworkGraph, mesh_links
+from .dashboard import NetworkGraph
 from .desktop import short_date
 from .model import CLOCK_SANE, Model, dm_conv
 
@@ -175,7 +176,7 @@ class MapView(QWidget):
         bar = QHBoxLayout()
         bar.setContentsMargins(16, 8, 16, 8)
         self.search = QLineEdit(placeholderText="Search nodes (name or key)…", clearButtonEnabled=True, objectName="round")
-        self.search.setMinimumWidth(170)
+        self.search.setMinimumWidth(120)
         self.search.setToolTip("Matches names, or the start of a node's key: a hop hash like a3 finds that repeater.\n"
                                "Enter zooms to the results. Ctrl+F jumps here, Esc clears.")
         self.names = QStringListModel(self)
@@ -208,7 +209,7 @@ class MapView(QWidget):
         self.count = QLabel("", objectName="dim")
         self.count.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.count.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # mustn't set the window's width
-        self.setMinimumWidth(340)  # nor must this bar: it gives up its filters when narrow
+        self.setMinimumWidth(280)  # nor must this bar: it gives up its filters when narrow
         self.filter_btn = QToolButton(text="Filters ▾", objectName="plain", visible=False)
         self.filter_btn.setPopupMode(QToolButton.InstantPopup)
         menu = QMenu(self.filter_btn, aboutToShow=self._fill_filters)
@@ -233,9 +234,6 @@ class MapView(QWidget):
 
         self._timer = QTimer(self, singleShot=True, interval=500, timeout=self.refresh)
         self._search_timer = QTimer(self, singleShot=True, interval=200, timeout=self.refresh)
-        self.links_on = False  # the Network view: every node shown, with the links drawn
-        self._sent = None
-        self.poll = QTimer(self, interval=5000, timeout=self._send_links)
 
     def _filter_chips(self) -> list[QCheckBox]:
         return [*self.types.values(), self.labels]
@@ -358,40 +356,12 @@ class MapView(QWidget):
             self.count.setToolTip(f"{total} of {len(self.model.contacts)} contacts have a location")
             self.search.setStyleSheet("")
         self.count.setText(msg)
-        opts = {"labels": self.labels.isChecked(), "dark": dark, "colors": asdict(theme.current), "cluster": not self.links_on}
+        opts = {"labels": self.labels.isChecked(), "dark": dark, "colors": asdict(theme.current), "cluster": True}
         self.view.page().runJavaScript(f"setNodes({json.dumps(nodes)}, {json.dumps(opts)})")
-        self._sent = None  # the page was just redrawn
-        self._send_links()
-
-    def show_links(self, on: bool):
-        self.links_on = on
-        self.refresh()
-
-    def _send_links(self):
-        if not self.ready:
-            return
-        out = []
-        if self.links_on:
-            shown = set(self.shown) | {"self"}
-            links, missed = map_links(self.model)
-            out = [{"a": a, "b": b, "n": n} for (a, b), n in sorted(links.items()) if a in shown and b in shown]
-            self.count.setText(f"{self.count.text().split(' · links')[0]} · links: {len(out)}")
-            note = "Hops are short hashes, so a link can land on a different node that shares the hash."
-            if missed:
-                note += f"\n{missed} link{'s' * (missed != 1)} can't be drawn because a node has no location."
-            self.count.setToolTip(note)
-        if out != self._sent:
-            self._sent = out
-            self.view.page().runJavaScript(f"setLinks({json.dumps(out)})")
 
     def showEvent(self, e):
         super().showEvent(e)
-        self.poll.start()
         QTimer.singleShot(0, self.refresh)  # after the layout has given the page its size
-
-    def hideEvent(self, e):
-        self.poll.stop()
-        super().hideEvent(e)
 
     def go_to_search(self):
         """Enter: fly to the one match, or fit them all. An exact name wins."""
@@ -421,6 +391,44 @@ class MapView(QWidget):
         if pts:
             self.view.page().runJavaScript(f"pulse({json.dumps(pts + [[s.lat, s.lon]])})")
 
+    def message_path(self, m) -> tuple[list[dict], list[str]]:
+        """Where a received message went: the sender, each repeater, then us, as
+        map points; and the names of the stops that have no location, so can't
+        be drawn. Hops are short hashes, so each is the likeliest located node."""
+        model = self.model
+        if m.conv.startswith("dm:"):
+            sender = model.contacts.get(bytes.fromhex(m.conv[3:]))
+        else:
+            sender = next((c for c in model.contacts.values() if c.name == m.sender), None)
+        stops = [(m.sender, sender)]
+        if m.path:
+            hops = [bytes.fromhex(h) for h in m.path]
+        elif m.hops < 0 and sender is not None and sender.hops > 0:
+            hops = list(reversed(sender.path.hops()))  # a direct DM: the route we know to them, backwards
+        else:
+            hops = []
+        for h in hops:
+            cs = [c for c in model.contacts.values() if c.key.startswith(h)]
+            cs.sort(key=lambda c: (not self._located(c), c.type != P.ADV_REPEATER))
+            c = cs[0] if cs else None
+            stops.append((c.name if c and c.name else h.hex(), c if c and self._located(c) else None))
+        s = model.self_info
+        pts, missing = [], []
+        for name, c in stops:
+            if c is not None and self._located(c):
+                pts.append({"lat": c.lat, "lon": c.lon, "name": name})
+            else:
+                missing.append(name)
+        if s and (s.lat or s.lon):
+            pts.append({"lat": s.lat, "lon": s.lon, "name": "You"})
+        else:
+            missing.append("you")
+        return pts, missing
+
+    def show_path(self, pts: list[dict]):
+        if self.ready:
+            self.view.page().runJavaScript(f"showPath({json.dumps(pts)}, {json.dumps(theme.current.danger)})")
+
     def focus(self, prefix_hex: str):
         if not self.ready:
             self.pending_focus = prefix_hex
@@ -429,42 +437,12 @@ class MapView(QWidget):
         self.view.page().runJavaScript(f"focusNode({json.dumps(prefix_hex)})")
 
 
-def map_links(model: Model) -> tuple[dict[tuple[str, str], int], int]:
-    """Links between nodes we can place, keyed by map key ("self" is us), and
-    how many links couldn't be drawn. A hop hash goes to the likeliest located
-    node, the same choice the packet pulses make."""
-    s = model.self_info
-    here = bool(s and (s.lat or s.lon))
-    located = sorted((c for c in model.contacts.values() if c.lat or c.lon), key=lambda c: c.type != P.ADV_REPEATER)
-
-    def where(h: str) -> str | None:
-        if h == ME:
-            return "self" if here else None
-        hop = bytes.fromhex(h)
-        return next((c.prefix.hex() for c in located if c.key.startswith(hop)), None)
-
-    links: Counter = Counter()
-    missed = 0
-
-    def add(a: str | None, b: str | None, n: int = 1):
-        nonlocal missed
-        if a is None or b is None:
-            missed += 1
-        elif a != b:
-            links[tuple(sorted((a, b)))] += n
-
-    for (a, b), n in mesh_links(model)[1].items():
-        add(where(a), where(b), n)
-    for c in located:  # the last leg to each node: mesh_links only follows the repeaters
-        if c.hops == 0 and c.type != P.ADV_REPEATER:
-            add(c.prefix.hex(), "self" if here else None)
-        elif c.hops > 0 and (hops := list(c.path.hops())):
-            add(where(hops[-1].hex()), c.prefix.hex())
-    return dict(links), missed
-
-
 class MapTab(QWidget):
-    """The Map / Network tab: the map, the map with its links, or the relay graph."""
+    """The Map / Network tab. Map: heard packets draw their paths as they come in.
+    Graph: who relays through whom. Trace message: no live packets, just the path
+    of the message last double-clicked in the conversation, in red."""
+    MAP, GRAPH, TRACE = range(3)
+    HINT = "Double-click a message to see the path it took."
 
     def __init__(self, model: Model, open_conv, action, stats):
         super().__init__()
@@ -479,30 +457,61 @@ class MapTab(QWidget):
         bar = QHBoxLayout()
         bar.setContentsMargins(16, 8, 16, 0)
         self.group = QButtonGroup(self)
-        for i, name in enumerate(("Map", "Network", "Graph")):
+        for i, name in enumerate(("Map", "Graph", "Trace message")):
             b = QCheckBox(name, checked=i == 0, objectName="chip")
             self.group.addButton(b, i)
             bar.addWidget(b)
         bar.addStretch(1)
         self.group.idClicked.connect(self._mode)
         lay.addLayout(bar)
+        self.note = QLabel(self.HINT, objectName="hint", wordWrap=True, visible=False)
+        self.note.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        note_row = QHBoxLayout()
+        note_row.setContentsMargins(16, 8, 16, 0)
+        note_row.addWidget(self.note)
+        lay.addLayout(note_row)
         lay.addWidget(self.stack, 1)
 
+    def mode(self) -> int:
+        return self.group.checkedId()
+
     def _mode(self, i: int):
-        self.stack.setCurrentWidget(self.graph if i == 2 else self.map)
-        if i < 2:
-            self.map.show_links(i == 1)
+        self.group.button(i).setChecked(True)
+        self.stack.setCurrentWidget(self.graph if i == self.GRAPH else self.map)
+        self.note.setVisible(i == self.TRACE)
+        if i != self.TRACE:  # the plain map only shows live packets
+            self.map.show_path([])
+            self.note.setText(self.HINT)
+
+    def trace(self, m) -> str | None:
+        """Shows a received message's path. Returns a problem to report, if any."""
+        self._mode(self.TRACE)
+        if m.outgoing:
+            self.map.show_path([])
+            self.note.setText("Paths are only known for messages you received. " + self.HINT)
+            return "Paths are only known for messages you received"
+        pts, missing = self.map.message_path(m)
+        self.map.show_path(pts)
+        text = "<b>Path:</b> " + " → ".join(html.escape(p["name"]) for p in pts)
+        if missing:
+            text += f"<br><small>No location, so not drawn: {html.escape(', '.join(missing))}</small>"
+        if len(pts) < 2:
+            self.note.setText(f"Not enough of the path from <b>{html.escape(m.sender)}</b> has a location to draw it."
+                              + (f"<br><small>No location: {html.escape(', '.join(missing))}</small>" if missing else ""))
+            return "Not enough of this path has a location to draw it"
+        self.note.setText(text)
+        return None
 
     def set_compact(self, on: bool):
         self.layout().itemAt(0).layout().setContentsMargins(*((6, 2, 6, 0) if on else (16, 8, 16, 0)))
+        self.layout().itemAt(1).layout().setContentsMargins(*((6, 3, 6, 0) if on else (16, 8, 16, 0)))
         self.map.layout().itemAt(0).layout().setContentsMargins(*((6, 2, 6, 2) if on else (16, 8, 16, 8)))
 
     def show_map(self):
         """Out of the graph, for something that needs the map on screen."""
-        if self.group.checkedId() == 2:
-            self.group.button(0).setChecked(True)
-            self._mode(0)
+        if self.mode() == self.GRAPH:
+            self._mode(self.MAP)
 
     def pulse(self, p: P.RawPacket):
-        if self.stack.currentWidget() is self.map:
+        if self.mode() == self.MAP:  # not while tracing: only the picked message's path shows then
             self.map.pulse(p)

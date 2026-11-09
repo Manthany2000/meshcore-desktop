@@ -9,10 +9,10 @@ A desktop chat app for a MeshCore node running companion firmware, over Bluetoot
 | Panels side by side | Map with node details |
 |---|---|
 | ![Panels](docs/panels.png) | ![Map](docs/map.png) |
-| **Network map with links** | **Relay graph** |
-| ![Network](docs/network.png) | ![Graph](docs/graph.png) |
-| **Repeater management** | **Live repeater stats** |
-| ![Repeater](docs/repeater.png) | ![Live](docs/live.png) |
+| **Relay graph** | **Repeater management** |
+| ![Graph](docs/graph.png) | ![Repeater](docs/repeater.png) |
+| **Live repeater stats** | |
+| ![Live](docs/live.png) | |
 
 - Channels and direct messages, with unread counts and desktop notifications for DMs and @mentions
 - Replies (`@[Name]`, double-click or Ctrl+R a message), mentions highlighted
@@ -25,7 +25,7 @@ A desktop chat app for a MeshCore node running companion firmware, over Bluetoot
 - Messages, map, repeater and dashboard as tiled panels: open several at once, close each individually, and drag a title onto another panel to swap them
 - Live traffic: every packet your connected node receives, as it arrives, on the Dashboard
 - Dashboard with nodes heard, busiest repeaters and channel activity
-- Map / Network tab: switch between the map, the map with the links between nodes, or a graph of who relays through whom
+- Map / Network tab: switch between the map, where each packet your node hears draws its path, and a graph of who relays through whom
 - Repeater battery and noise history, kept each time you refresh a repeater
 - Light and dark themes that follow your system, with a choice of accent colours
 - Alerts when a new repeater or contact is heard for the first time, and a list of nodes found while the app was closed

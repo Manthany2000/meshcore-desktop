@@ -1,16 +1,53 @@
-"""The main views as tiled panels: buttons along the top open and close them,
+"""The main views as tiled panels: chips (chip_bar, which the window puts in its
+toolbar) open and close them,
 each has its own close button, and dragging one by its title onto another swaps
 the two. A panel too small for its contents scrolls, so a crowded layout can't
 force the window wider than the screen."""
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRect, Qt, Signal
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QScrollArea, QSplitter, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QColor, QPainter
+from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QScrollArea, QSplitter, QSplitterHandle, QToolButton,
+                               QVBoxLayout, QWidget)
 
 from . import theme
 
 DRAG_START = 8  # pixels, so a plain click on a title doesn't count
+MIN_PANE = QSize(320, 150)  # every view lays itself out to fit this
+
+
+class Grip(QSplitterHandle):
+    """The gap between two panels, with a short bar in the middle that says it drags."""
+
+    def __init__(self, o, parent):
+        super().__init__(o, parent)
+        self.setAttribute(Qt.WA_Hover)
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(Qt.NoPen)
+        hot = self.underMouse()
+        p.setBrush(QColor(theme.current.accent if hot else theme.current.border))
+        r = QRectF(self.rect())
+        if self.orientation() == Qt.Horizontal:
+            box = QRectF(r.center().x() - 2, r.center().y() - 22, 4, 44)
+        else:
+            box = QRectF(r.center().x() - 22, r.center().y() - 2, 44, 4)
+        p.drawRoundedRect(box, 2, 2)
+
+    def event(self, e):
+        if e.type() in (e.Type.HoverEnter, e.Type.HoverLeave):
+            self.update()
+        return super().event(e)
+
+
+class Tiles(QSplitter):
+    def __init__(self, o):
+        super().__init__(o, handleWidth=8, childrenCollapsible=False, objectName="tiles")
+
+    def createHandle(self):
+        return Grip(self.orientation(), self)
 
 
 def columns(shown: list) -> tuple[list, list]:
@@ -65,7 +102,7 @@ class Pane(QFrame):
         v = QVBoxLayout(self)
         v.setContentsMargins(1, 1, 1, 1)
         v.setSpacing(0)
-        header = Header(self, space)
+        header = self.header = Header(self, space)
         head = QHBoxLayout(header)
         head.setContentsMargins(14, 5, 6, 3)
         self.title = QLabel(title)
@@ -81,9 +118,20 @@ class Pane(QFrame):
         head.addWidget(x)
         self.head, self.close_btn = head, x
         v.addWidget(header)
-        scroll = QScrollArea(frameShape=QFrame.NoFrame, widgetResizable=True)
+        # Up and down only: a view always gets the panel's width and lays itself out to fit.
+        scroll = self.scroll = QScrollArea(frameShape=QFrame.NoFrame, widgetResizable=True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(widget)
         v.addWidget(scroll, 1)
+
+    def minimumSizeHint(self):
+        return MIN_PANE
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        fit = getattr(self.widget, "fit_width", None)
+        if fit:
+            fit(self.scroll.viewport().width())
 
 
 class Workspace(QWidget):
@@ -96,18 +144,20 @@ class Workspace(QWidget):
         self.chips: list[QCheckBox] = []
         self.order: list[int] = []  # pane indexes, in the order they tile
         v = QVBoxLayout(self)
-        v.setContentsMargins(8, 8, 8, 8)
-        v.setSpacing(8)
-        self.bar = QHBoxLayout()
-        self.bar.addStretch(1)
-        v.addLayout(self.bar)
-        self.root = QSplitter(Qt.Horizontal, handleWidth=6, childrenCollapsible=False)
-        self.left = QSplitter(Qt.Vertical, handleWidth=6, childrenCollapsible=False)
-        self.right = QSplitter(Qt.Vertical, handleWidth=6, childrenCollapsible=False)
+        v.setContentsMargins(6, 6, 6, 6)
+        v.setSpacing(6)
+        self.chip_bar = QWidget()
+        self.bar = QHBoxLayout(self.chip_bar)
+        self.bar.setContentsMargins(0, 0, 0, 0)
+        self.bar.setSpacing(4)
+        # Gaps between the tiles, each with a grip to drag.
+        self.root = Tiles(Qt.Horizontal)
+        self.left = Tiles(Qt.Vertical)
+        self.right = Tiles(Qt.Vertical)
         self.root.addWidget(self.left)
         self.root.addWidget(self.right)
         v.addWidget(self.root, 1)
-        self.empty = QLabel("Everything is closed. Pick a view above.", objectName="dim", alignment=Qt.AlignCenter)
+        self.empty = QLabel("Everything is closed. Pick a view in the toolbar.", objectName="dim", alignment=Qt.AlignCenter)
         v.addWidget(self.empty, 1)
         self.marker = QFrame(self)  # shows where a dragged panel would land
         self.marker.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -121,7 +171,7 @@ class Workspace(QWidget):
         self.left.addWidget(pane)
         chip = QCheckBox(title, objectName="chip", toolTip="Open or close this panel")
         chip.clicked.connect(lambda on: self.set_open(i, on))
-        self.bar.insertWidget(i, chip)
+        self.bar.addWidget(chip)
         self.panes.append(pane)
         self.chips.append(chip)
         self.order.append(i)
@@ -138,9 +188,9 @@ class Workspace(QWidget):
             self.opened.emit(pane.widget)
 
     def set_compact(self, on: bool):
-        outer = 3 if on else 8
+        outer = 3 if on else 6
         self.layout().setContentsMargins(outer, outer, outer, outer)
-        self.layout().setSpacing(3 if on else 8)
+        self.layout().setSpacing(3 if on else 6)
         for p in self.panes:
             p.head.setContentsMargins(*((8, 1, 3, 0) if on else (14, 5, 6, 3)))
             p.close_btn.setFixedSize(*((24, 20) if on else (30, 26)))
@@ -158,6 +208,7 @@ class Workspace(QWidget):
         shown = [self.panes[i] for i in self.order if self.panes[i].is_open]
         for p in self.panes:
             p.setVisible(p.is_open)
+            p.header.setVisible(len(shown) > 1)  # a lone panel is named by its chip already
         left, right = columns(shown)
         for column, panes in ((self.left, left), (self.right, right)):
             for pos, p in enumerate(panes):

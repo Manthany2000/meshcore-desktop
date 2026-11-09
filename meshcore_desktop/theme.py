@@ -73,6 +73,7 @@ def _sheet(c: Colors) -> str:
     return f"""
     QToolTip {{ background: {c.raised}; color: {c.text}; border: 1px solid {c.border}; padding: 4px 6px; }}
     QSplitter::handle {{ background: {c.border}; }}
+    QSplitter#tiles::handle {{ background: transparent; }}
     QLabel#dim {{ color: {c.dim}; }}
 
     QToolBar {{ background: {c.surface}; border: none; border-bottom: 1px solid {c.border}; padding: 6px 8px; spacing: 4px; }}
@@ -110,7 +111,7 @@ def _sheet(c: Colors) -> str:
     QHeaderView::section {{ background: {c.surface}; color: {c.dim}; border: none;
                             border-bottom: 1px solid {c.border}; padding: 5px 4px; }}
     QListView#conversation {{ background: {c.bg}; border: none; }}
-    QTextBrowser#details {{ background: {c.surface}; border: none; padding: 10px; }}
+    QTextBrowser#details {{ background: {c.surface}; border: none; padding: 4px 10px 10px 10px; }}
 
     QLineEdit, QPlainTextEdit, QComboBox {{ background: {c.surface}; border: 1px solid {c.border}; border-radius: 10px;
         padding: 6px 10px; selection-background-color: {c.accent}; selection-color: {c.on_accent}; }}
@@ -137,7 +138,11 @@ def _sheet(c: Colors) -> str:
                       padding: 3px 11px; min-height: 18px; color: {c.dim}; }}
     QCheckBox#chip:hover {{ border-color: {c.accent}; }}
     QCheckBox#chip:checked {{ background: {c.accent_soft}; border-color: {c.accent}; color: {c.text}; font-weight: 600; }}
-    QCheckBox#chip::indicator {{ width: 0; height: 0; }}
+    QCheckBox#chip::indicator {{ width: 0; height: 0; border: none; image: none; background: transparent; margin: 0; }}
+    QCheckBox#chip {{ spacing: 0; }}
+    QToolBar QToolButton#more {{ border-radius: 14px; padding: 5px 4px; min-width: 22px; font-size: 16px; font-weight: 700; }}
+    QFrame#detailsBox {{ background: {c.surface}; }}
+    QLabel#hint {{ background: {c.accent_soft}; color: {c.text}; border-radius: 10px; padding: 7px 12px; }}
 
     QFrame#tile {{ background: {c.surface}; border: 1px solid {c.border}; border-radius: 12px; }}
     QLabel#big {{ font-size: 26px; font-weight: 700; color: {c.text}; }}
@@ -169,9 +174,9 @@ def _sheet(c: Colors) -> str:
 # Added after the main sheet, so these win. Keep each radius at most half the height, or Qt draws square corners.
 compact = False
 COMPACT = """
-    QWidget { font-size: 12px; }
     QToolBar { padding: 2px 6px; spacing: 3px; }
     QToolBar QToolButton { padding: 2px 10px; min-height: 16px; border-radius: 11px; }
+    QToolBar QToolButton#more { padding: 2px 4px; border-radius: 11px; }
     QPushButton, QToolButton#plain { padding: 2px 10px; min-height: 16px; border-radius: 11px; }
     QLineEdit, QPlainTextEdit, QComboBox { padding: 3px 8px; border-radius: 8px; }
     QLineEdit#round { padding: 2px 10px; min-height: 16px; border-radius: 11px; }

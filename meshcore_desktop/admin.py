@@ -10,13 +10,15 @@ from dataclasses import dataclass, field
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QColor, QFontDatabase
-from PySide6.QtWidgets import (QComboBox, QGraphicsDropShadowEffect, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
+from PySide6.QtWidgets import (QBoxLayout, QComboBox, QGraphicsDropShadowEffect, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
                                QPlainTextEdit, QPushButton, QTabWidget, QToolButton, QVBoxLayout, QWidget)
 
 from . import protocol as P
 from . import theme
 from .live import LivePage
-from .widgets import BatteryGauge, LineChart
+from .widgets import BatteryGauge, LineChart, place_pairs
+
+NARROW = 600  # below this the status and settings grids go to one column
 
 log = logging.getLogger("admin")
 
@@ -149,6 +151,7 @@ class RepeaterPanel(QWidget):
         self.busy = False
         self.link_ready = False
         self._build()
+        self.fit_width(1000)
         self._sync()
 
     # --- layout --------------------------------------------------------------
@@ -167,7 +170,6 @@ class RepeaterPanel(QWidget):
         v.addWidget(self.title)
         v.addWidget(self.subtitle)
 
-        row = QHBoxLayout()
         self.password = QLineEdit(placeholderText="Password (blank if you're already its admin)")
         self.password.setEchoMode(QLineEdit.Password)
         self.password.setMaxLength(P.PASSWORD_MAX)
@@ -177,45 +179,35 @@ class RepeaterPanel(QWidget):
         self.route_btn = QPushButton("Reset route")
         self.route_btn.setToolTip("Forget the saved route, so the next request finds one by flood")
         self.route_btn.clicked.connect(self.reset_route)
-        row.addWidget(self.password, 1)
-        row.addWidget(self.login_btn)
-        row.addWidget(self.route_btn)
-        v.addLayout(row)
         self.state = QLabel("")
         self.state.setWordWrap(True)
-        row = QHBoxLayout()
-        row.addWidget(self.state, 1)
         self.advert_near = QPushButton("Zero-hop advert")
         self.advert_near.setToolTip("The repeater announces itself to nodes that can hear it directly")
         self.advert_near.clicked.connect(lambda: self.send_advert(False))
         self.advert_flood = QPushButton("Flood advert")
         self.advert_flood.setToolTip("The repeater announces itself across the whole mesh. Uses more airtime.")
         self.advert_flood.clicked.connect(lambda: self.send_advert(True))
-        row.addWidget(self.advert_near)
-        row.addWidget(self.advert_flood)
-        v.addLayout(row)
+        self.top = QGridLayout()  # placed by fit_width: wide, the buttons sit beside the field
+        self.top.setColumnStretch(0, 1)
+        v.addLayout(self.top)
 
         box = QGroupBox("Status")
-        grid = QGridLayout(box)
+        grid = self.status_grid = QGridLayout(box)
         self.values: dict[str, QLabel] = {}
-        for i, (label, key) in enumerate(STAT_ROWS):
-            r, c = i // 2, (i % 2) * 2
+        self.status_pairs = []
+        for label, key in STAT_ROWS:
             name = QLabel(label, objectName="dim")
             value = QLabel("—")
             value.setTextInteractionFlags(Qt.TextSelectableByMouse)
             self.values[key] = value
-            grid.addWidget(name, r, c)
-            grid.addWidget(value, r, c + 1)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(3, 1)
+            self.status_pairs.append((name, value))
         self.status_btn = QPushButton("Refresh")
         self.status_btn.clicked.connect(self.refresh)
-        grid.addWidget(self.status_btn, (len(STAT_ROWS) - 1) // 2, 3, Qt.AlignRight)  # shares the Updated row
         self.gauge = BatteryGauge()
-        grid.addWidget(self.gauge, 0, 4, (len(STAT_ROWS) + 1) // 2, 1, Qt.AlignCenter)
         box.setGraphicsEffect(QGraphicsDropShadowEffect(blurRadius=18, xOffset=0, yOffset=2, color=QColor(0, 0, 0, 45)))
         v.addWidget(box)
         self.status_box = box
+        self.narrow = None
 
         self.console =QPlainTextEdit(readOnly=True)
         self.console.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
@@ -270,10 +262,10 @@ class RepeaterPanel(QWidget):
 
     def _settings_page(self) -> QWidget:
         page = QWidget()
-        grid = QGridLayout(page)
+        grid = self.settings_grid = QGridLayout(page)
         self.fields: dict[str, QLineEdit | QComboBox] = {}
-        for i, s in enumerate(SETTINGS):
-            r, c = i // 2, (i % 2) * 2
+        self.settings_pairs = []
+        for s in SETTINGS:
             if s.choices:
                 w = QComboBox()
                 w.addItems(s.choices)
@@ -284,13 +276,9 @@ class RepeaterPanel(QWidget):
                     w.setMaxLength(s.max_len)
             w.setToolTip(s.hint)
             self.fields[s.key] = w
-            grid.addWidget(QLabel(s.label, objectName="dim"), r, c)
-            grid.addWidget(w, r, c + 1)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(3, 1)
-        grid.setRowStretch(len(SETTINGS) // 2 + 1, 1)
-        row = QHBoxLayout()
-        self.note = QLabel("Read the current values first.", objectName="dim")
+            self.settings_pairs.append((QLabel(s.label, objectName="dim"), w))
+        row = self.settings_row = QBoxLayout(QBoxLayout.LeftToRight)
+        self.note = QLabel("Read the current values first.", objectName="dim", wordWrap=True)
         self.read_btn = QPushButton("Read from repeater")
         self.read_btn.clicked.connect(self.read_settings)
         self.apply_btn = QPushButton("Apply changes", objectName="primary")
@@ -298,8 +286,50 @@ class RepeaterPanel(QWidget):
         row.addWidget(self.note, 1)
         row.addWidget(self.read_btn)
         row.addWidget(self.apply_btn)
-        grid.addLayout(row, len(SETTINGS) // 2 + 2, 0, 1, 4)
         return page
+
+    def fit_width(self, w: int):
+        """Called by its panel with the width it has: two columns of values, or one."""
+        narrow = w < NARROW
+        if narrow == self.narrow:
+            return
+        self.narrow = narrow
+        cols = 1 if narrow else 2
+        t = self.top
+        for x in (self.password, self.login_btn, self.route_btn, self.state, self.advert_near, self.advert_flood):
+            t.removeWidget(x)
+        if narrow:  # field, its buttons, the advert buttons, then the status text
+            t.addWidget(self.password, 0, 0, 1, 3)
+            t.addWidget(self.login_btn, 1, 1)
+            t.addWidget(self.route_btn, 1, 2)
+            t.addWidget(self.advert_near, 2, 1)
+            t.addWidget(self.advert_flood, 2, 2)
+            t.addWidget(self.state, 3, 0, 1, 3)
+        else:
+            t.addWidget(self.password, 0, 0)
+            t.addWidget(self.login_btn, 0, 1)
+            t.addWidget(self.route_btn, 0, 2)
+            t.addWidget(self.state, 1, 0)
+            t.addWidget(self.advert_near, 1, 1)
+            t.addWidget(self.advert_flood, 1, 2)
+        self.settings_row.setDirection(QBoxLayout.TopToBottom if narrow else QBoxLayout.LeftToRight)
+        g = self.status_grid
+        g.removeWidget(self.gauge)
+        g.removeWidget(self.status_btn)
+        rows = place_pairs(g, self.status_pairs, cols)
+        if narrow:  # the gauge goes under the values, beside Refresh
+            g.addWidget(self.gauge, rows, 0, Qt.AlignLeft)
+            g.addWidget(self.status_btn, rows, 1, Qt.AlignRight | Qt.AlignBottom)
+        else:  # its own column on the right, Refresh under it
+            g.addWidget(self.gauge, 0, 4, rows - 1, 1, Qt.AlignCenter)
+            g.addWidget(self.status_btn, rows - 1, 4, Qt.AlignCenter)
+        sg = self.settings_grid
+        sg.removeItem(self.settings_row)
+        for r in range(len(SETTINGS) + 3):
+            sg.setRowStretch(r, 0)
+        rows = place_pairs(sg, self.settings_pairs, cols)
+        sg.setRowStretch(rows, 1)
+        sg.addLayout(self.settings_row, rows + 1, 0, 1, 4)
 
     # --- state ---------------------------------------------------------------
 

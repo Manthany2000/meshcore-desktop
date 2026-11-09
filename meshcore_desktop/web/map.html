@@ -55,8 +55,11 @@
            color: #222; text-shadow: 0 0 3px #fff, 0 0 3px #fff; padding: 0; }
   body.dark .label { color: #eee; text-shadow: 0 0 3px #000, 0 0 3px #000; }
   .label::before { display: none; }
-  .legend { background: rgba(255,255,255,.9); padding: 6px 9px; border-radius: 6px; font: 12px system-ui, sans-serif;
-            line-height: 1.6; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+  /* One row, so it doesn't cover half of a small map. */
+  .legend { background: rgba(255,255,255,.9); padding: 3px 10px; border-radius: 12px; font: 12px system-ui, sans-serif;
+            line-height: 1.6; box-shadow: 0 1px 4px rgba(0,0,0,.3); display: flex; flex-wrap: wrap; gap: 0 12px;
+            max-width: calc(100vw - 90px); }
+  .legend span { white-space: nowrap; }
   body.dark .legend { background: rgba(30,34,40,.92); color: #ddd; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px;
               vertical-align: -1px; border: 1.5px solid rgba(0,0,0,.5); }
@@ -78,7 +81,6 @@ const nodes = L.layerGroup().addTo(map);
 const route = L.layerGroup().addTo(map);
 const ring = L.layerGroup().addTo(map);
 const fx = L.layerGroup().addTo(map);
-const linkLayer = L.layerGroup().addTo(map);
 const cluster = L.markerClusterGroup({
   maxClusterRadius: 44, disableClusteringAtZoom: 13, showCoverageOnHover: false,
   iconCreateFunction: c => L.divIcon({className: "pin-wrap", iconSize: [38, 38],
@@ -96,8 +98,8 @@ let markers = {}, fitted = false, showLabels = true, last = null, accent = "#0d7
 const legend = L.control({position: "bottomleft"});
 legend.onAdd = () => {
   const d = L.DomUtil.create("div", "legend");
-  d.innerHTML = Object.entries(TYPES).map(([k, v]) => `<i style="background:${COLORS[k]}"></i>${v}`).join("<br>")
-    + `<br><i style="background:${COLORS.self}"></i>You`;
+  d.innerHTML = Object.entries(TYPES).map(([k, v]) => `<span><i style="background:${COLORS[k]}"></i>${v}</span>`).join("")
+    + `<span><i style="background:${COLORS.self}"></i>You</span>`;
   return d;
 };
 legend.addTo(map);
@@ -199,8 +201,8 @@ function setNodes(data, opts) {
   const pts = [], batch = [];
   for (const n of data) {
     const m = L.marker([n.lat, n.lon], {icon: pin(n), zIndexOffset: n.self ? 1000 : 0});
-    m.on("mouseover", e => { showHover(n, e.containerPoint); trace(n.key); });
-    m.on("mouseout", () => { hideHover(); trace(null); });
+    m.on("mouseover", e => { showHover(n, e.containerPoint); });
+    m.on("mouseout", () => { hideHover(); });
     m.on("click", () => openPanel(n));
     if (showLabels) m.bindTooltip(esc(n.name), {permanent: true, direction: "right", offset: [14, 0], className: "label"});
     if (n.self || opts.cluster === false) m.addTo(nodes); else batch.push(m);
@@ -232,25 +234,6 @@ function focusNode(key) {
   return true;
 }
 
-// The Network tab's links. Hovering a node leaves only its own lit.
-let links = [], traced = null;
-function setLinks(data) {
-  linkLayer.clearLayers();
-  const at = Object.fromEntries((last || []).map(n => [n.key, n]));
-  const top = Math.max(1, ...data.map(l => l.n));
-  links = data.filter(l => at[l.a] && at[l.b]).map(l => {
-    const a = at[l.a], b = at[l.b];
-    const line = L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {color: accent, weight: 1.5 + 3 * Math.sqrt(l.n / top)}).addTo(linkLayer);
-    line.bindTooltip(`${esc(a.name)} ↔ ${esc(b.name)}<br>Used ${l.n} time${l.n === 1 ? "" : "s"}`, {sticky: true});
-    return {line, a: l.a, b: l.b};
-  });
-  trace(traced);
-}
-function trace(key) {
-  traced = key;
-  for (const l of links) l.line.setStyle({opacity: !key ? .65 : (l.a === key || l.b === key) ? .95 : .12});
-}
-
 // The route our node would use: us, then each repeater with a known location.
 function showRoute(key) {
   route.clearLayers();
@@ -263,6 +246,38 @@ function showRoute(key) {
   L.polyline(pts, {color: "#f0b429", weight: 4, opacity: 0.85, dashArray: (n.route || []).some(h => !h) ? "8 6" : null})
     .addTo(route);
   map.fitBounds(L.latLngBounds(pts).pad(0.2), {maxZoom: 13});
+}
+
+// A message's path, double-clicked in the message list: drawn in red, stop by stop.
+// It stays until another message is traced or the Trace message view is left.
+map.createPane("msgpath").style.zIndex = 450;  // above the packet lines, under the markers
+const msgPath = L.layerGroup().addTo(map);
+let pathRun = 0;
+function showPath(pts, color) {
+  msgPath.clearLayers();
+  const run = ++pathRun;
+  if (!pts.length) return;
+  const ll = pts.map(p => [p.lat, p.lon]);
+  if (ll.length > 1) map.fitBounds(L.latLngBounds(ll).pad(0.25), {maxZoom: 13});
+  else map.setView(ll[0], Math.max(map.getZoom(), 11));
+  const line = L.polyline([ll[0]], {pane: "msgpath", color, weight: 4, opacity: .95, lineCap: "round", interactive: false}).addTo(msgPath);
+  const stop = (p, i) => L.circleMarker([p.lat, p.lon], {pane: "msgpath", radius: i === 0 || i === pts.length - 1 ? 7 : 5, color: "#fff",
+      weight: 2, fillColor: color, fillOpacity: 1}).bindTooltip(`${i + 1}. ${esc(p.name)}`, {direction: "top"}).addTo(msgPath);
+  stop(pts[0], 0);
+  const SEG = 500;
+  let seen = 0;
+  animate(ms => {
+    if (run !== pathRun) return false;  // replaced by a newer one
+    const f = ms / SEG, i = Math.floor(f);
+    if (i >= ll.length - 1) {
+      line.setLatLngs(ll);
+      for (let k = seen + 1; k < pts.length; k++) stop(pts[k], k);
+      return false;
+    }
+    if (i > seen) { seen = i; stop(pts[i], i); }
+    const k = f - i;
+    line.setLatLngs([...ll.slice(0, i + 1), [ll[i][0] + (ll[i + 1][0] - ll[i][0]) * k, ll[i][1] + (ll[i + 1][1] - ll[i][1]) * k]]);
+  });
 }
 
 // A packet's trip: a dot runs along its path and each stop flashes.
@@ -283,20 +298,29 @@ function flash(at) {
 function pulse(pts) {
   if (pulsing >= 6) return;  // a busy mesh shouldn't turn the map into noise
   pulsing++;
-  const line = L.polyline(pts, {color: accent, weight: 2, opacity: .5, interactive: false}).addTo(fx);
+  // The path draws in behind the dot, hop by hop, then stays a moment and fades.
+  const line = L.polyline([pts[0]], {color: accent, weight: 3, opacity: .85, lineCap: "round", interactive: false}).addTo(fx);
   const dot = L.circleMarker(pts[0], {radius: 5, color: "#fff", weight: 2, fillColor: accent, fillOpacity: 1, interactive: false}).addTo(fx);
   flash(pts[0]);
-  const SEG = 420;
-  let seen = 0;
+  const SEG = 420, HOLD = 2500, FADE = 1500;
+  let seen = 0, end = null;
   animate(ms => {
+    if (end !== null) {
+      const t = ms - end;
+      if (t >= HOLD + FADE) { fx.removeLayer(line); pulsing--; return false; }
+      if (t > HOLD) line.setStyle({opacity: .85 * (1 - (t - HOLD) / FADE)});
+      return true;
+    }
     const f = ms / SEG, i = Math.floor(f);
     if (i >= pts.length - 1) {
-      fx.removeLayer(line); fx.removeLayer(dot); flash(pts[pts.length - 1]); pulsing--;
-      return false;
+      line.setLatLngs(pts); fx.removeLayer(dot); flash(pts[pts.length - 1]); end = ms;
+      return true;
     }
     if (i > seen) { seen = i; flash(pts[i]); }
     const k = f - i;
-    dot.setLatLng([pts[i][0] + (pts[i + 1][0] - pts[i][0]) * k, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k]);
+    const at = [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * k, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k];
+    dot.setLatLng(at);
+    line.setLatLngs([...pts.slice(0, i + 1), at]);
   });
 }
 

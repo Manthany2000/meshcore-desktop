@@ -451,3 +451,20 @@ class LineChart(QWidget):
 
 def _when(t: float) -> str:
     return time.strftime("%b %d %H:%M", time.localtime(t))
+
+
+def place_pairs(grid, pairs: list, cols: int, first_row: int = 0) -> int:
+    """Lays label/value pairs into a grid, `cols` pairs per row, so a panel can
+    go from two columns to one when it's narrow. Returns the next free row."""
+    for a, b in pairs:
+        grid.removeWidget(a)
+        grid.removeWidget(b)
+    for c in range(4):
+        grid.setColumnStretch(c, 0)
+    for i, (a, b) in enumerate(pairs):
+        r, c = first_row + i // cols, (i % cols) * 2
+        grid.addWidget(a, r, c)
+        grid.addWidget(b, r, c + 1)
+    for c in range(cols):
+        grid.setColumnStretch(c * 2 + 1, 1)
+    return first_row + (len(pairs) + cols - 1) // cols

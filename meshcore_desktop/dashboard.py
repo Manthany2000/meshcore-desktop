@@ -17,6 +17,8 @@ from . import theme
 from .model import Model
 from .widgets import BarChart
 
+NARROW = 620  # below this the dashboard stacks: two tiles a row, one card a row
+
 DAY = 86400
 PACKET_NAMES = {0: "Request", 1: "Response", 2: "Direct msg", 3: "Ack", 4: "Advert", 5: "Channel msg", 6: "Channel data",
                 7: "Anon request", 8: "Path", 9: "Trace"}
@@ -60,10 +62,11 @@ class Dashboard(QWidget):
     def __init__(self, model: Model):
         super().__init__()
         self.model = model
-        grid = QGridLayout(self)
+        grid = self.grid = QGridLayout(self)
         grid.setContentsMargins(16, 12, 16, 12)
         grid.setSpacing(10)
         self.tiles: dict[str, QLabel] = {}
+        self.tile_frames: list[QFrame] = []
         for i, (key, caption) in enumerate((("heard", "Nodes heard, 24 h"), ("repeaters", "Repeaters known"),
                                             ("messages", "Messages, 24 h"), ("packets", "Packets this session"))):
             tile = QFrame(objectName="tile")
@@ -72,20 +75,48 @@ class Dashboard(QWidget):
             self.tiles[key] = big
             v.addWidget(big)
             v.addWidget(QLabel(caption, objectName="dim"))
-            grid.addWidget(tile, 0, i)
+            self.tile_frames.append(tile)
         self.busiest = BarChart("Repeaters appear here once they relay messages you can hear.", "messages relayed")
         self.channels = BarChart("No channel messages in the last week.", "messages")
-        grid.addWidget(self._card("Busiest repeaters", self.busiest), 1, 0, 1, 2)
-        grid.addWidget(self._card("Channel activity, 7 days", self.channels), 1, 2, 1, 2)
+        self.cards = [self._card("Busiest repeaters", self.busiest), self._card("Channel activity, 7 days", self.channels)]
         self.feed = QPlainTextEdit(readOnly=True)
         self.feed.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
         self.feed.setMaximumBlockCount(300)
         self.feed.setPlaceholderText("Packets your node hears will scroll by here.")
         self.feed.setLineWrapMode(QPlainTextEdit.NoWrap)
-        grid.addWidget(self._card("Live packets", self.feed), 2, 0, 1, 4)
-        grid.setRowStretch(1, 1)
-        grid.setRowStretch(2, 1)
+        self.feed_card = self._card("Live packets", self.feed)
+        self.narrow = None
+        self.fit_width(1000)
         self.timer = QTimer(self, interval=3000, timeout=self.refresh)
+
+    def fit_width(self, w: int):
+        """Called by its panel with the width it has."""
+        narrow = w < NARROW
+        if narrow == self.narrow:
+            return
+        self.narrow = narrow
+        g = self.grid
+        g.setContentsMargins(*((8, 8, 8, 8) if narrow else (16, 12, 16, 12)))
+        for x in (*self.tile_frames, *self.cards, self.feed_card):
+            g.removeWidget(x)
+        for r in range(6):
+            g.setRowStretch(r, 0)
+        if narrow:
+            for i, t in enumerate(self.tile_frames):
+                g.addWidget(t, i // 2, (i % 2) * 2, 1, 2)
+            g.addWidget(self.cards[0], 2, 0, 1, 4)
+            g.addWidget(self.cards[1], 3, 0, 1, 4)
+            g.addWidget(self.feed_card, 4, 0, 1, 4)
+            for r in (2, 3, 4):
+                g.setRowStretch(r, 1)
+        else:
+            for i, t in enumerate(self.tile_frames):
+                g.addWidget(t, 0, i)
+            g.addWidget(self.cards[0], 1, 0, 1, 2)
+            g.addWidget(self.cards[1], 1, 2, 1, 2)
+            g.addWidget(self.feed_card, 2, 0, 1, 4)
+            g.setRowStretch(1, 1)
+            g.setRowStretch(2, 1)
 
     def _card(self, title: str, inner: QWidget) -> QFrame:
         card = QFrame(objectName="tile")
