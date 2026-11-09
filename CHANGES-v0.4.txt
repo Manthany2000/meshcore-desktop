@@ -1,87 +1,31 @@
-MeshCore Desktop v0.4: changes since v0.3
-==========================================
+MeshCore Desktop v0.4
 
-This release is mostly about the layout: a cleaner look, and a window that
-works on a small laptop screen.
+NEW
 
+Trace message: A new view on the Map / Network tab, beside Map and Graph. A note above the map says "Double-click a message to see the path it took". Double-click a received message and its path is drawn in red, from the sender through each repeater to you. The map zooms to fit it, each stop has a numbered tooltip, and the note shows the route and any stop with no location. Live packet lines are hidden in this view. With the Map / Network panel open, double-clicking a message switches to this view automatically. With it closed, double-click still replies, and Ctrl+R or the right-click menu always replies.
 
-Toolbar
--------
-- One toolbar row instead of two. The view chips (Messages, Map / Network,
-  Repeater, Dashboard) moved into the main toolbar.
-- The right side shows the node name and battery %, the connection status,
-  Connect or Disconnect, and a new ⋯ menu.
-- The ⋯ menu holds the occasional actions: Send advert (zero-hop or flood),
-  Forget pairing, Message details (Ctrl+I), Compact layout (Ctrl+M) and
-  Accent colour.
-- The radio settings and firmware version moved into the tooltip on the
-  node name.
-- The view chips are hidden on the welcome screen until a node is connected.
-- Fixed a stray "·" in front of each view chip's label.
+Resizable tiled panels: Drag the grip between two panels to resize them. Panels no longer scroll sideways. Their content reflows to fit instead: message bubbles wrap, the Dashboard stacks its tiles and charts, and the Repeater screen drops to one column of values with its buttons wrapped underneath. A panel won't shrink below 320 px, so nothing gets cut off.
 
+The ⋯ menu: Send advert, Forget pairing, Message details (Ctrl+I), Compact layout (Ctrl+M) and Accent colour are now in a menu at the right end of the toolbar.
 
-Panels and window
------------------
-- A panel's title bar only shows when two or more panels are open. A single
-  panel fills the space.
-- Tiled panels resize properly. Drag the grip between two panels.
-- Panels never scroll sideways. Their content reflows to fit the width:
-    - Messages: bubbles wrap to the panel width.
-    - Dashboard: below about 620 px, the stat tiles go two to a row and the
-      charts stack.
-    - Repeater: below about 600 px, the status and settings values drop to
-      one column, the buttons wrap under the password field, and the battery
-      gauge moves under the values.
-    - Map: the search box shrinks and the filters fold into the Filters menu.
-- A panel stops shrinking at 320 px, so nothing gets cut off.
-- The gaps between tiled panels are clean, not thick grey bars.
-- The sidebar is narrower: 280 px, down from 340.
-- The window opens no larger than the screen. It used to open at
-  1250x780 even on a 768 px-tall laptop.
+CHANGED
 
+One toolbar row: The view chips moved into the main toolbar, so content starts higher on the screen. The right side shows the node name, battery %, the connection status, and Connect or Disconnect. Radio settings and firmware are in the tooltip on the node name. The view chips are hidden until a node is connected.
 
-Messages
---------
-- The message details panel is hidden until you click a message. Close it
-  with × or Ctrl+I. It used to take 290 px of width all the time.
-- The conversation header is tighter.
+Live packets on the map: The Map view now shows only live packets. Each received packet draws its path as it arrives, holds for a few seconds, then fades, with at most 6 shown at once. The Network mode, which drew permanent links between nodes, has been removed.
 
+Message details: The details panel stays hidden until you click a message, and closes with × or Ctrl+I. It used to take up width all the time.
 
-Map / Network
--------------
-- The Network mode is gone. The tab now has three options: Map, Graph and
-  Trace message.
-- Received packets draw their path on the map: a dot runs along each hop and
-  the line draws in behind it, stays about 2.5 s, then fades. At most 6
-  paths show at once. This needs a flood packet (relayed at least once),
-  your node's location, and at least one located repeater on the path.
-- The map legend is one row, so it no longer covers half of a small map.
-- New "Trace message" view next to Map and Graph. A note above the map says
-  "Double-click a message to see the path it took". Double-click a received
-  message and its path is drawn in red: sender, each repeater, then you. The
-  map zooms to fit it, each stop has a numbered tooltip, and the note shows
-  the route and any stop without a location. Live packet lines don't show
-  in this view, only the traced message. Double-clicking a message while the
-  map panel is open switches to this view by itself. With the map closed,
-  double-click still replies, and Ctrl+R or the right-click menu always
-  replies.
-- The Map view shows only live packets; traced paths stay in Trace message.
+Panel title bars: A panel's title bar only shows when two or more panels are open. A single panel fills the space.
 
+Small screens: The window opens no larger than your screen, and the sidebar is narrower (280 px, down from 340). Compact mode now keeps normal-size text and only tightens the spacing.
 
-Repeater
---------
-- In compact mode, the Refresh button no longer covers the "Updated" time.
-  It now sits under the battery gauge.
+Map legend: The legend is a single row, so it no longer covers half of a small map.
 
+FIXED
 
-Compact mode
-------------
-- Compact mode keeps normal-size text and only tightens the spacing. It used
-  to shrink the font to 12 px.
+The Refresh button on the Repeater screen no longer covers the "Updated" time in compact mode.
 
+The stray "·" in front of each view chip's label is gone.
 
-Other
------
-- README: the screenshot table no longer has the Network map, and the
-  Map / Network description is updated.
-- Note: the other README screenshots still show the v0.3 layout.
+The gaps between tiled panels are clean instead of thick grey bars.
