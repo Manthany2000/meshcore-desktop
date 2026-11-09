@@ -188,6 +188,11 @@ def test_dashboard_data(tmp_path):
         assert ("Public", 2) in channel_activity(m)
         weight, links = mesh_links(m)
         assert ME in weight and tuple(sorted((ME, KEY[:1].hex()))) in links
+        from meshcore_desktop.mapview import map_links
+        placed, _missed = map_links(m)
+        ridge = next(c for c in m.contacts.values() if c.key.startswith(KEY[:1]))
+        assert tuple(sorted(("self", ridge.prefix.hex()))) in placed
+        assert all(a != b for a, b in placed)
         when, raw = m.packets[-1]
         assert "Channel msg" in packet_line(when, raw) and KEY[:1].hex() in packet_line(when, raw)
         await s.stop()

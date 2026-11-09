@@ -14,12 +14,13 @@ from PySide6.QtCore import QStringListModel
 from PySide6.QtGui import QDesktopServices, QKeySequence, QPalette, QShortcut
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QCompleter, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                               QSizePolicy, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QCompleter, QHBoxLayout, QLabel, QLineEdit,
+                               QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget)
 
 from . import protocol as P
 from . import theme
 from .admin import STAT_ROWS
+from .dashboard import ME, NetworkGraph, mesh_links
 from .desktop import short_date
 from .model import CLOCK_SANE, Model, dm_conv
 
@@ -160,6 +161,9 @@ class _Page(QWebEnginePage):
 
 
 class MapView(QWidget):
+    clusters = True
+    storage = "meshcore-map"  # each live profile needs its own
+
     def __init__(self, model: Model, open_conv, action=lambda what, c: None, stats=lambda prefix: {}):
         super().__init__()
         self.model = model
@@ -215,7 +219,7 @@ class MapView(QWidget):
         lay.addLayout(bar)
 
         # OpenStreetMap's tile policy asks apps to identify themselves.
-        self.profile = QWebEngineProfile("meshcore-map", self)
+        self.profile = QWebEngineProfile(self.storage, self)
         self.profile.setHttpUserAgent("MeshCore-Desktop/0.1 (Qt WebEngine)")
         self.view = QWebEngineView()
         page = _Page(self.profile, self.view, self._link)
@@ -322,7 +326,7 @@ class MapView(QWidget):
             self.count.setToolTip(f"{total} of {len(self.model.contacts)} contacts have a location")
             self.search.setStyleSheet("")
         self.count.setText(msg)
-        opts = {"labels": self.labels.isChecked(), "dark": dark, "colors": asdict(theme.current)}
+        opts = {"labels": self.labels.isChecked(), "dark": dark, "colors": asdict(theme.current), "cluster": self.clusters}
         self.view.page().runJavaScript(f"setNodes({json.dumps(nodes)}, {json.dumps(opts)})")
 
     def go_to_search(self):
@@ -359,3 +363,108 @@ class MapView(QWidget):
             return
         self.pending_focus = None
         self.view.page().runJavaScript(f"focusNode({json.dumps(prefix_hex)})")
+
+
+def map_links(model: Model) -> tuple[dict[tuple[str, str], int], int]:
+    """Links between nodes we can place, keyed by map key ("self" is us), and
+    how many links couldn't be drawn. A hop hash goes to the likeliest located
+    node, the same choice the packet pulses make."""
+    s = model.self_info
+    here = bool(s and (s.lat or s.lon))
+    located = sorted((c for c in model.contacts.values() if c.lat or c.lon), key=lambda c: c.type != P.ADV_REPEATER)
+
+    def where(h: str) -> str | None:
+        if h == ME:
+            return "self" if here else None
+        hop = bytes.fromhex(h)
+        return next((c.prefix.hex() for c in located if c.key.startswith(hop)), None)
+
+    links: Counter = Counter()
+    missed = 0
+
+    def add(a: str | None, b: str | None, n: int = 1):
+        nonlocal missed
+        if a is None or b is None:
+            missed += 1
+        elif a != b:
+            links[tuple(sorted((a, b)))] += n
+
+    for (a, b), n in mesh_links(model)[1].items():
+        add(where(a), where(b), n)
+    for c in located:  # the last leg to each node: mesh_links only follows the repeaters
+        if c.hops == 0 and c.type != P.ADV_REPEATER:
+            add(c.prefix.hex(), "self" if here else None)
+        elif c.hops > 0 and (hops := list(c.path.hops())):
+            add(where(hops[-1].hex()), c.prefix.hex())
+    return dict(links), missed
+
+
+class NetworkMap(MapView):
+    """The Map tab's map, unclustered so everyone shows, with the links drawn."""
+    clusters = False
+    storage = "meshcore-network-map"
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self._sent = None
+        self.poll = QTimer(self, interval=5000, timeout=self._send_links)
+
+    def refresh(self):
+        super().refresh()
+        self._sent = None  # the page was just redrawn
+        self._send_links()
+
+    def _send_links(self):
+        if not self.ready:
+            return
+        shown = set(self.shown) | {"self"}
+        links, missed = map_links(self.model)
+        out = [{"a": a, "b": b, "n": n} for (a, b), n in sorted(links.items()) if a in shown and b in shown]
+        text = self.count.text().split(" · links")[0]
+        self.count.setText(f"{text} · links: {len(out)}")
+        note = "Hops are short hashes, so a link can land on a different node that shares the hash."
+        if missed:
+            note += f"\n{missed} link{'s' * (missed != 1)} can't be drawn because a node has no location."
+        self.count.setToolTip(note)
+        if out != self._sent:
+            self._sent = out
+            self.view.page().runJavaScript(f"setLinks({json.dumps(out)})")
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.poll.start()
+        QTimer.singleShot(0, self.refresh)  # after the layout has given the page its size
+
+    def hideEvent(self, e):
+        self.poll.stop()
+        super().hideEvent(e)
+
+
+class NetworkTab(QWidget):
+    """The mesh two ways: on a map, or as a graph for nodes with no location."""
+
+    def __init__(self, model: Model, open_conv, action, stats):
+        super().__init__()
+        self.map = NetworkMap(model, open_conv, action, stats)
+        self.graph = NetworkGraph(model)
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.map)
+        self.stack.addWidget(self.graph)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        bar = QHBoxLayout()
+        bar.setContentsMargins(16, 8, 16, 0)
+        group = QButtonGroup(self)
+        for i, name in enumerate(("Map", "Graph")):
+            b = QCheckBox(name, checked=i == 0, objectName="chip")
+            group.addButton(b, i)
+            bar.addWidget(b)
+        bar.addStretch(1)
+        group.idClicked.connect(self.stack.setCurrentIndex)
+        lay.addLayout(bar)
+        lay.addWidget(self.stack, 1)
+
+    def pulse(self, p: P.RawPacket):
+        if self.stack.currentWidget() is self.map:
+            self.map.pulse(p)

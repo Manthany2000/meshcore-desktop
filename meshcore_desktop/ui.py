@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QDialog, QDialog
 from . import protocol as P
 from . import theme
 from .admin import RepeaterPanel
-from .dashboard import Dashboard, NetworkGraph
+from .dashboard import Dashboard
 from .widgets import Radar, Toast, Welcome, battery_pixmap, fade_in, signal_html, signal_icon
 from .desktop import notify, settings, short_date
 from .pairing import PairingError
@@ -667,15 +667,15 @@ class MainWindow(QMainWindow):
         self.center = QTabWidget()
         self.center.setDocumentMode(True)
         self.center.addTab(mid, "Messages")
-        from .mapview import MapView
+        from .mapview import MapView, NetworkTab
         self.map = MapView(self.model, self.open_conv, self._map_action, self._repeater_stats)
         self.center.addTab(self.map, "Map")
         self.admin = RepeaterPanel(self)
         self.center.addTab(self.admin, "Repeater")
         self.dashboard = Dashboard(self.model)
         self.center.addTab(self.dashboard, "Dashboard")
-        self.graph = NetworkGraph(self.model)
-        self.center.addTab(self.graph, "Network")
+        self.network = NetworkTab(self.model, self.open_conv, self._map_action, self._repeater_stats)
+        self.center.addTab(self.network, "Network")
         self.center.currentChanged.connect(self._center_tab)
         split.addWidget(self.center)
 
@@ -722,6 +722,7 @@ class MainWindow(QMainWindow):
         self.welcome.retheme()
         self._node_label()
         self.map.refresh()
+        self.network.map.refresh()
         self.view.viewport().update()
 
     def choose_device(self):
@@ -869,15 +870,17 @@ class MainWindow(QMainWindow):
         elif ev == "contacts":
             self._refresh_contacts()
             self._refresh_timer.start()
-            self.map.schedule()
+            self._maps_changed()
         elif ev == "contact":
             if self.state == "ready":
                 self._contacts_timer()
-                self.map.schedule()
+                self._maps_changed()
         elif ev == "packet":
             self.dashboard.add_packet(obj)
             if self.center.currentWidget() is self.map:
                 self.map.pulse(obj)
+            elif self.center.currentWidget() is self.network:
+                self.network.pulse(obj)
         elif ev == "new_contact":
             if self.state == "ready":
                 self.toast(f"New node heard: {obj.name or obj.key[:3].hex()}")
@@ -885,7 +888,11 @@ class MainWindow(QMainWindow):
             self.admin.late_reply(obj)
         elif ev == "node":
             self._node_label()
-            self.map.schedule()
+            self._maps_changed()
+
+    def _maps_changed(self):
+        self.map.schedule()
+        self.network.map.schedule()
 
     def _contacts_timer(self):
         if not hasattr(self, "_ct"):
@@ -1036,7 +1043,7 @@ class MainWindow(QMainWindow):
 
     def _center_tab(self, i: int):
         self.details.setVisible(i == 0)
-        if self.center.widget(i) is not self.map:
+        if self.center.widget(i) not in (self.map, self.network):  # graphics effects break web views
             fade_in(self.center.widget(i))
         if i == 1:
             self.map.refresh()

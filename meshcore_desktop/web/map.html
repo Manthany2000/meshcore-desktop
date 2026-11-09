@@ -78,6 +78,7 @@ const nodes = L.layerGroup().addTo(map);
 const route = L.layerGroup().addTo(map);
 const ring = L.layerGroup().addTo(map);
 const fx = L.layerGroup().addTo(map);
+const linkLayer = L.layerGroup().addTo(map);
 const cluster = L.markerClusterGroup({
   maxClusterRadius: 44, disableClusteringAtZoom: 13, showCoverageOnHover: false,
   iconCreateFunction: c => L.divIcon({className: "pin-wrap", iconSize: [38, 38],
@@ -198,11 +199,11 @@ function setNodes(data, opts) {
   const pts = [], batch = [];
   for (const n of data) {
     const m = L.marker([n.lat, n.lon], {icon: pin(n), zIndexOffset: n.self ? 1000 : 0});
-    m.on("mouseover", e => showHover(n, e.containerPoint));
-    m.on("mouseout", hideHover);
+    m.on("mouseover", e => { showHover(n, e.containerPoint); trace(n.key); });
+    m.on("mouseout", () => { hideHover(); trace(null); });
     m.on("click", () => openPanel(n));
     if (showLabels) m.bindTooltip(esc(n.name), {permanent: true, direction: "right", offset: [14, 0], className: "label"});
-    if (n.self) m.addTo(nodes); else batch.push(m);
+    if (n.self || opts.cluster === false) m.addTo(nodes); else batch.push(m);
     markers[n.key] = m;
     pts.push([n.lat, n.lon]);
   }
@@ -229,6 +230,25 @@ function focusNode(key) {
   if (cluster.hasLayer(m)) cluster.zoomToShowLayer(m, () => openPanel(n));
   else { map.setView(m.getLatLng(), Math.max(map.getZoom(), 11)); openPanel(n); }
   return true;
+}
+
+// The Network tab's links. Hovering a node leaves only its own lit.
+let links = [], traced = null;
+function setLinks(data) {
+  linkLayer.clearLayers();
+  const at = Object.fromEntries((last || []).map(n => [n.key, n]));
+  const top = Math.max(1, ...data.map(l => l.n));
+  links = data.filter(l => at[l.a] && at[l.b]).map(l => {
+    const a = at[l.a], b = at[l.b];
+    const line = L.polyline([[a.lat, a.lon], [b.lat, b.lon]], {color: accent, weight: 1.5 + 3 * Math.sqrt(l.n / top)}).addTo(linkLayer);
+    line.bindTooltip(`${esc(a.name)} ↔ ${esc(b.name)}<br>Used ${l.n} time${l.n === 1 ? "" : "s"}`, {sticky: true});
+    return {line, a: l.a, b: l.b};
+  });
+  trace(traced);
+}
+function trace(key) {
+  traced = key;
+  for (const l of links) l.line.setStyle({opacity: !key ? .65 : (l.a === key || l.b === key) ? .95 : .12});
 }
 
 // The route our node would use: us, then each repeater with a known location.

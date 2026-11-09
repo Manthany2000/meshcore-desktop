@@ -20,7 +20,8 @@ A desktop chat app for a MeshCore node running companion firmware, over Bluetoot
 - Contacts: type, hops, last heard, distance; reset route; message from the list
 - Add `#hashtag` or private channels, remove channels
 - Map with type icons, clustering, live packet paths, and full details on hover or click
-- Dashboard with activity and a live packet feed, plus a graph of who relays through whom
+- Dashboard with activity and a live packet feed
+- Network tab: a map of where everyone is with the links between them, or a graph of who relays through whom
 - Repeater battery and noise history, kept each time you refresh a repeater
 - Light and dark themes that follow your system, with a choice of accent colours
 - Sends zero-hop or flood adverts; sets the node's clock from the PC if it's behind
