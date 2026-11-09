@@ -2,7 +2,7 @@
 
 A desktop chat app for a MeshCore node running companion firmware, over Bluetooth LE.
 
-> **Early version.** All features have been tested on Linux ( Fedora build ) and work. Windows builds are untested on real Windows.
+> **Early version.** All features have been tested on Linux ( Fedora build ) and work. Windows builds are untested.
 
 ![MeshCore Desktop messages](docs/messages.png)
 
