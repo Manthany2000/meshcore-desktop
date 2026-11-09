@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import random
 import struct
 import time
@@ -29,12 +30,15 @@ CONTACTS = [  # name, type, lat, lon, hops
     ("Town Room", P.ADV_ROOM, 42.34, -71.12, 1),
 ]
 
+DISCOVERED = [("Harbor Repeater", P.ADV_REPEATER, 42.32, -70.98, 1), ("carol-mobile", P.ADV_CHAT, 42.31, -71.08, 1)]
+
 CHATTER = ["anyone on tonight?", "test from the car", "good copy here, 3 hops", "@[{me}] you're coming in clear",
            "new repeater up on the ridge", "weather's turning, signal is great", "ping", "73 all"]
 
 
 class SimTransport:
-    def __init__(self):
+    def __init__(self, visitor: bool = False):
+        self.visitor = visitor  # a different unknown node in the list each run, as if heard while the app was closed
         self.on_frame = lambda b: None
         self.on_disconnect = lambda: None
         self.name = "SimNode"
@@ -42,6 +46,9 @@ class SimTransport:
         self.clock = int(time.time()) - 3600  # a bit behind, so the app sets it
         self.queue: list[bytes] = []
         self.contacts = [(n, _key(n), t, la, lo, h) for n, t, la, lo, h in CONTACTS]
+        if visitor:
+            name = f"Visitor-{random.randint(1000, 9999)}"
+            self.contacts.append((name, _key(name), P.ADV_CHAT, 42.37, -71.22, 1))
         self.repeaters = [c for c in self.contacts if c[2] == P.ADV_REPEATER]
         self.channels = {0: ("Public", PUBLIC_SECRET), 1: ("#test", hashlib.sha256(b"#test").digest()[:16])}
         self.task = None
@@ -98,8 +105,16 @@ class SimTransport:
 
     async def _chatter(self):
         me = self.name
+        found = list(DISCOVERED)
         while True:
             await asyncio.sleep(random.uniform(10, 20))
+            if found:  # one node at a time turns up on the air
+                name, typ, lat, lon, hops = found.pop(0)
+                node = (name, _key(name), typ, lat, lon, hops)
+                self.contacts.append(node)
+                if typ == P.ADV_REPEATER:
+                    self.repeaters.append(node)
+                self._push(self._contact_frame(node, P.PUSH_NEW_ADVERT))
             sender = random.choice([c for c in self.contacts if c[2] == P.ADV_CHAT])
             if random.random() < 0.75:
                 ch = random.choice(list(self.channels))
@@ -154,9 +169,14 @@ class SimTransport:
         key = b[1:33]
         self._push(struct.pack("<BBII", P.RESP_SENT, 0, 2, 500))
         if self._repeater(key):
+            # Counters that climb unevenly, so the Live page has something to draw.
+            t = time.monotonic() - self._t0
+            rx, tx = int(t * .6 + 5 * math.sin(t / 20)), int(t * .3 + 3 * math.sin(t / 13))
+            rx, tx = max(rx, 0), max(tx, 0)
             self._push(bytes([P.PUSH_STATUS_RESPONSE, 0]) + key[:6] + struct.pack(
-                "<HHhhIIIIIIIIHhHHII", 3987, 1, -112, -71, 48213, 21877, 1842, 412345, 18000, 3877, 40000, 8213,
-                2, 26, 15, 930, 5120, 3), 0.4)
+                "<HHhhIIIIIIIIHhHHII", 3987, 1, -112 + int(3 * math.sin(t / 15)), -71, 48213 + rx, 21877 + tx, 1842 + int(t * .03),
+                412345 + int(t), 18000 + tx // 2, 3877 + tx // 2, 40000 + rx // 2, 8213 + rx // 2,
+                2, 26, 15, 930 + rx // 8, 5120 + int(t * .08), 3), 0.4)
 
     def _cli(self, b: bytes):
         prefix, cmd = b[7:13], b[13:].decode()

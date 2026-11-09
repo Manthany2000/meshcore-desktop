@@ -367,9 +367,10 @@ class BarChart(QWidget):
 class LineChart(QWidget):
     """One measure over time, with a crosshair and readout on hover."""
 
-    def __init__(self, title: str, unit: str, fmt: Callable[[float], str] = lambda v: f"{v:g}"):
+    def __init__(self, title: str, unit: str, fmt: Callable[[float], str] = lambda v: f"{v:g}",
+                 empty: str = "Each Refresh adds a point. Two are needed to draw a line."):
         super().__init__()
-        self.title, self.unit, self.fmt = title, unit, fmt
+        self.title, self.unit, self.fmt, self.empty = title, unit, fmt, empty
         self.points: list[tuple[float, float]] = []
         self.hover: int | None = None
         self.setMouseTracking(True)
@@ -405,8 +406,7 @@ class LineChart(QWidget):
         p.setFont(self.font())
         if len(self.points) < 2:
             p.setPen(QColor(t.dim))
-            p.drawText(self.rect().adjusted(0, 20, 0, 0), Qt.AlignCenter | Qt.TextWordWrap,
-                       "Each Refresh adds a point. Two are needed to draw a line.")
+            p.drawText(self.rect().adjusted(0, 20, 0, 0), Qt.AlignCenter | Qt.TextWordWrap, self.empty)
             return
         r = self._plot()
         xy = self._xy(r)
@@ -419,7 +419,10 @@ class LineChart(QWidget):
         for k in (0, .5, 1):
             y = r.bottom() - k * r.height()
             p.drawText(QRectF(0, y - 9, 46, 18), Qt.AlignRight | Qt.AlignVCenter, self.fmt(lo + (hi - lo) * k))
-        for text, align in ((_when(self.points[0][0]), Qt.AlignLeft), (_when(self.points[-1][0]), Qt.AlignRight)):
+        ends = [(_when(self.points[-1][0]), Qt.AlignRight)]
+        if r.width() >= 220:  # narrower, and the two would overlap
+            ends.append((_when(self.points[0][0]), Qt.AlignLeft))
+        for text, align in ends:
             p.drawText(QRectF(r.left(), r.bottom() + 4, r.width(), 16), align | Qt.AlignVCenter, text)
         p.setPen(QPen(QColor(t.accent), 2, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         p.drawPolyline(xy)

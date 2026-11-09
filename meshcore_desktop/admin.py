@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QComboBox, QGraphicsDropShadowEffect, QGridLayout
 
 from . import protocol as P
 from . import theme
+from .live import LivePage
 from .widgets import BatteryGauge, LineChart
 
 log = logging.getLogger("admin")
@@ -214,8 +215,9 @@ class RepeaterPanel(QWidget):
         grid.addWidget(self.gauge, 0, 4, (len(STAT_ROWS) + 1) // 2, 1, Qt.AlignCenter)
         box.setGraphicsEffect(QGraphicsDropShadowEffect(blurRadius=18, xOffset=0, yOffset=2, color=QColor(0, 0, 0, 45)))
         v.addWidget(box)
+        self.status_box = box
 
-        self.console = QPlainTextEdit(readOnly=True)
+        self.console =QPlainTextEdit(readOnly=True)
         self.console.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
         self.console.setMaximumBlockCount(2000)
         console_page = QWidget()
@@ -246,6 +248,10 @@ class RepeaterPanel(QWidget):
         self.inner.addTab(console_page, "Console")
         self.inner.addTab(self._settings_page(), "Settings")
         self.inner.addTab(self._history_page(), "History")
+        self.live = LivePage(self)
+        self.inner.addTab(self.live, "Live")
+        # The charts need the room, and Live shows the rates itself.
+        self.inner.currentChanged.connect(lambda i: self.status_box.setVisible(self.inner.widget(i) is not self.live))
         v.addWidget(self.inner, 1)
 
     def _history_page(self) -> QWidget:
@@ -316,6 +322,7 @@ class RepeaterPanel(QWidget):
         self.advert_flood.setEnabled(cli)
         self.read_btn.setEnabled(cli)
         self.apply_btn.setEnabled(cli and bool(r.settings))
+        self.live.set_usable(self.link_ready and r is not None and r.logged_in and r.is_admin is not False)
         for key, w in self.fields.items():
             w.setEnabled(cli and key in r.settings)
 
@@ -349,6 +356,14 @@ class RepeaterPanel(QWidget):
         self.gauge.set_percent(r.pct)
         self._load_history(c)
         self._login_state()
+        self.live.show_contact(c)
+        self._sync()
+
+    def live_changed(self, running: bool):
+        """A dot on the tabs: polling goes on from any screen, and shouldn't go unnoticed."""
+        dot = " ●" if running else ""
+        self.inner.setTabText(self.inner.indexOf(self.live), "Live" + dot)
+        self.win.center.setTabText(self.win.center.indexOf(self), "Repeater" + dot)
         self._sync()
 
     def _login_state(self):
@@ -367,6 +382,8 @@ class RepeaterPanel(QWidget):
 
     def link_changed(self, state: str):
         self.link_ready = state == "ready"
+        if not self.link_ready:
+            self.live.stop("Stopped: the link to your node dropped.")
         if state == "disconnected":
             # The next connect may well be a different companion node.
             consoles = {k: v.console for k, v in self.remotes.items()}
@@ -445,10 +462,15 @@ class RepeaterPanel(QWidget):
         if f is None or f.kind == "err":
             self._report(c, self._failure(f), True)
             return
+        self.apply_status(c, f)
+
+    def apply_status(self, c: P.Contact, f: P.Frame, record: bool = True):
+        """Shows a status reply. Live polls only sometimes record one, or they'd swamp the History."""
         r = self.remotes.setdefault(c.prefix, Remote())
         r.stats = stat_text(f.stats)
         r.pct = P.batt_percent(f.stats["batt_mv"]) if f.stats["batt_mv"] else None
-        self.win.model.record_repeater(c.prefix, f.stats)
+        if record:
+            self.win.model.record_repeater(c.prefix, f.stats)
         if self._showing(c):
             self.gauge.set_percent(r.pct)
             self._load_history(c)

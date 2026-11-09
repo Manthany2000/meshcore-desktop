@@ -80,7 +80,7 @@ def _sheet(c: Colors) -> str:
     QToolBar QToolButton {{ background: {c.surface}; border: 1px solid {c.border}; border-radius: 14px;
                             padding: 5px 14px; min-height: 18px; font-weight: 500; }}
     QToolBar QToolButton:hover {{ background: {c.raised}; border-color: {c.accent}; }}
-    QToolBar QToolButton:pressed {{ background: {c.accent_soft}; }}
+    QToolBar QToolButton:pressed, QToolBar QToolButton:checked {{ background: {c.accent_soft}; border-color: {c.accent}; }}
     QToolBar QToolButton:disabled {{ color: {c.dim}; background: transparent; border-color: {c.raised}; }}
     QToolBar QToolButton#primary:enabled {{ {grad} color: {c.on_accent}; border: 1px solid {c.accent}; font-weight: 600; }}
     QToolBar QToolButton#primary:enabled:hover {{ {grad_hi} }}
@@ -166,6 +166,27 @@ def _sheet(c: Colors) -> str:
     """
 
 
+# Added after the main sheet, so these win. Keep each radius at most half the height, or Qt draws square corners.
+compact = False
+COMPACT = """
+    QWidget { font-size: 12px; }
+    QToolBar { padding: 2px 6px; spacing: 3px; }
+    QToolBar QToolButton { padding: 2px 10px; min-height: 16px; border-radius: 11px; }
+    QPushButton, QToolButton#plain { padding: 2px 10px; min-height: 16px; border-radius: 11px; }
+    QLineEdit, QPlainTextEdit, QComboBox { padding: 3px 8px; border-radius: 8px; }
+    QLineEdit#round { padding: 2px 10px; min-height: 16px; border-radius: 11px; }
+    QCheckBox#chip { padding: 1px 8px; min-height: 15px; border-radius: 9px; }
+    QTabBar::tab { padding: 2px 10px; margin: 3px 2px; min-height: 14px; border-radius: 9px; }
+    QListWidget::item { padding: 3px 6px; }
+    QTreeWidget::item { padding: 1px 2px; }
+    QHeaderView::section { padding: 2px 4px; }
+    QGroupBox { margin-top: 16px; padding: 4px; }
+    QMenu::item { padding: 3px 18px 3px 10px; }
+    QLabel#big { font-size: 20px; }
+    QLabel#hero { font-size: 22px; }
+"""
+
+
 def accent_gradient(rect: QRectF) -> QLinearGradient:
     g = QLinearGradient(rect.topLeft(), rect.bottomRight())
     g.setColorAt(0, QColor(current.accent))
@@ -233,9 +254,15 @@ def apply(app: QApplication, dark: bool, accent: str | None = None):
     current = replace(DARK if dark else LIGHT, **ACCENTS[accent_name][dark])
     app.setStyle("Fusion")  # the one built-in style that honours all of this on Linux and Windows
     app.setPalette(_palette(current))
-    app.setStyleSheet(_sheet(current))
+    app.setStyleSheet(_sheet(current) + (COMPACT if compact else ""))
     for fn in list(on_change):
         fn()
+
+
+def set_compact(app: QApplication, on: bool):
+    global compact
+    compact = on
+    apply(app, current.dark)
 
 
 def follow_system(app: QApplication, accent: str = "Teal"):

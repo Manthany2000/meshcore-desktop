@@ -197,3 +197,73 @@ def test_dashboard_data(tmp_path):
         assert "Channel msg" in packet_line(when, raw) and KEY[:1].hex() in packet_line(when, raw)
         await s.stop()
     asyncio.run(go())
+
+
+def test_live_page_data():
+    from meshcore_desktop.live import parse_neighbors, rates, relayed_by
+    base = dict.fromkeys(("recv", "sent", "recv_flood", "recv_direct", "flood_dups", "direct_dups", "errors", "recv_errors",
+                          "air_secs", "rx_air_secs"), 100) | {"up_secs": 1000}
+    r = rates(base, base | {"recv": 130, "air_secs": 106, "up_secs": 1060})
+    assert r["rx"] == 30 and r["tx"] == 0 and r["air_tx"] == 10
+    assert rates(base, base | {"recv": 5, "up_secs": 1060}) is None  # counters cleared
+    assert rates(base, base | {"up_secs": 3}) is None  # rebooted
+    assert parse_neighbors("A1B2C3D4:42:26\n99F0E1AA:310:-8\n99F0") == [("a1b2c3d4", 42, 6.5), ("99f0e1aa", 310, -2.0)]
+    assert parse_neighbors("-none-") == []
+    via = P.RawPacket(5, True, 2, P.HopList(1, KEY[:1] + b"\x00"), b"", 3.0, -80)
+    assert relayed_by(via, KEY)
+    assert not relayed_by(P.RawPacket(5, True, 1, P.HopList(1, bytes([KEY[0] ^ 1])), b"", 3.0, -80), KEY)
+    assert not relayed_by(P.RawPacket(5, False, 1, P.HopList(1, KEY[:1]), b"", 3.0, -80), KEY)
+
+
+def test_panel_layout():
+    from meshcore_desktop.workspace import columns
+    assert columns(["a"]) == (["a"], [])
+    assert columns(["a", "b"]) == (["a"], ["b"])
+    assert columns(["a", "b", "c"]) == (["a"], ["b", "c"])
+    assert columns(["a", "b", "c", "d"]) == (["a", "c"], ["b", "d"])
+
+
+def test_panel_swap():
+    from meshcore_desktop.workspace import swapped
+    assert swapped([0, 1, 2, 3], 1, 3) == [0, 3, 2, 1]
+
+
+def test_new_contact_alert_once(tmp_path):
+    async def go():
+        s, t = _session(tmp_path)
+        await s.start()
+        m = s.model
+        seen = []
+        emit = m.emit
+        m.emit = lambda ev, obj=None: (seen.append(obj.name) if ev == "new_contact" else None, emit(ev, obj))[1]
+        name = "Brand New Repeater"
+        node = (name, S._key(name), P.ADV_REPEATER, 42.0, -71.0, 1)
+        frame = P.decode(t._contact_frame(node, P.PUSH_NEW_ADVERT))
+        m.apply(frame)
+        m.apply(frame)  # a radio that doesn't save it reports it as new every time
+        assert seen == [name]
+        del m.contacts[frame.contact.prefix]  # next session: only our own record remembers it
+        m.apply(frame)
+        assert seen == [name]
+        known = P.decode(t._contact_frame(("Quiet", S._key("Quiet"), P.ADV_CHAT, 0, 0, 1)))
+        m.apply(known)  # the ordinary contact list isn't a discovery
+        assert seen == [name]
+        await s.stop()
+    asyncio.run(go())
+
+
+def test_found_while_away(tmp_path):
+    async def go():
+        s, t = _session(tmp_path)
+        await s.start()
+        m = s.model
+        assert m.first_sync is False and m.found_away == []  # the very first sync isn't news
+        await s.stop()
+        s2 = Session(Model(tmp_path), S.SimTransport(visitor=True))
+        await s2.start()
+        m2 = s2.model
+        found = m2.take_found_away()
+        assert [c.name[:8] for c in found] == ["Visitor-"]
+        assert m2.take_found_away() == []  # only reported once
+        await s2.stop()
+    asyncio.run(go())

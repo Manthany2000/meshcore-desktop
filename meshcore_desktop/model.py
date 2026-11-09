@@ -102,6 +102,9 @@ class Model:
         self.raw_log: deque = deque(maxlen=64)  # [packet, at, claimed]
         self.next_temp = -1
         self.packets: deque = deque(maxlen=2000)  # (at, RawPacket), this session only
+        self.saved_names: dict[bytes, str] = {}  # every node this companion has ever had, from the database
+        self.first_sync = True
+        self.found_away: list[P.Contact] = []  # in the node's contact list but new to us
         self.last_snr: dict[bytes, float] = {}  # prefix -> SNR of its latest message
 
     # --- plumbing -----------------------------------------------------------
@@ -145,8 +148,14 @@ class Model:
             self.channels.setdefault(idx, Channel(idx, name))
         # Names for DMs restored before the node's contact list arrives.
         self.saved_names = {bytes.fromhex(k): n for k, n, _ in self.db.execute("SELECT * FROM contacts")}
+        self.first_sync = not self.saved_names  # everything looks new the first time: that isn't news
+        self.found_away = []
         self.last_read = dict(self.db.execute("SELECT conv, at FROM reads"))
         self.emit("reload")
+
+    def take_found_away(self) -> list:
+        found, self.found_away = self.found_away, []
+        return found
 
     def _save(self, m: Message):
         if not self.db:
@@ -331,8 +340,12 @@ class Model:
             self.emit("node")
         elif k == "contact":
             c = f.contact
-            known = c.prefix in self.contacts
+            # A node the radio doesn't keep comes back as "new" at every advert, so check our own record too.
+            known = c.prefix in self.contacts or c.prefix in self.saved_names
+            if not known and not f.is_new and not self.first_sync:
+                self.found_away.append(c)
             self.contacts[c.prefix] = c
+            self.saved_names[c.prefix] = c.name
             if f.is_new:
                 self.heard[c.prefix] = time.time()
             if self.db:
@@ -343,6 +356,7 @@ class Model:
             if f.is_new and not known:
                 self.emit("new_contact", c)
         elif k == "contacts_end":
+            self.first_sync = False
             if self.db:
                 self.db.commit()
             self.emit("contacts")

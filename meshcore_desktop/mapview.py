@@ -14,8 +14,8 @@ from PySide6.QtCore import QStringListModel
 from PySide6.QtGui import QDesktopServices, QKeySequence, QPalette, QShortcut
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QCompleter, QHBoxLayout, QLabel, QLineEdit,
-                               QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QCompleter, QHBoxLayout, QLabel, QLineEdit, QMenu,
+                               QPushButton, QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
 from . import protocol as P
 from . import theme
@@ -161,9 +161,6 @@ class _Page(QWebEnginePage):
 
 
 class MapView(QWidget):
-    clusters = True
-    storage = "meshcore-map"  # each live profile needs its own
-
     def __init__(self, model: Model, open_conv, action=lambda what, c: None, stats=lambda prefix: {}):
         super().__init__()
         self.model = model
@@ -211,7 +208,12 @@ class MapView(QWidget):
         self.count = QLabel("", objectName="dim")
         self.count.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.count.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # mustn't set the window's width
-        self.setMinimumWidth(560)  # nor must this bar: the details panel needs that room on other tabs
+        self.setMinimumWidth(340)  # nor must this bar: it gives up its filters when narrow
+        self.filter_btn = QToolButton(text="Filters ▾", objectName="plain", visible=False)
+        self.filter_btn.setPopupMode(QToolButton.InstantPopup)
+        menu = QMenu(self.filter_btn, aboutToShow=self._fill_filters)
+        self.filter_btn.setMenu(menu)
+        bar.addWidget(self.filter_btn)
         bar.addWidget(self.count, 1)
         fit = QPushButton("Fit all")
         fit.clicked.connect(lambda: self.ready and self.view.page().runJavaScript("fit()"))
@@ -219,7 +221,7 @@ class MapView(QWidget):
         lay.addLayout(bar)
 
         # OpenStreetMap's tile policy asks apps to identify themselves.
-        self.profile = QWebEngineProfile(self.storage, self)
+        self.profile = QWebEngineProfile("meshcore-map", self)
         self.profile.setHttpUserAgent("MeshCore-Desktop/0.1 (Qt WebEngine)")
         self.view = QWebEngineView()
         page = _Page(self.profile, self.view, self._link)
@@ -231,6 +233,36 @@ class MapView(QWidget):
 
         self._timer = QTimer(self, singleShot=True, interval=500, timeout=self.refresh)
         self._search_timer = QTimer(self, singleShot=True, interval=200, timeout=self.refresh)
+        self.links_on = False  # the Network view: every node shown, with the links drawn
+        self._sent = None
+        self.poll = QTimer(self, interval=5000, timeout=self._send_links)
+
+    def _filter_chips(self) -> list[QCheckBox]:
+        return [*self.types.values(), self.labels]
+
+    def _fill_filters(self):
+        """The narrow layout's menu, which works the hidden chips."""
+        menu = self.filter_btn.menu()
+        menu.clear()
+        for cb in self._filter_chips():
+            a = menu.addAction(cb.text())
+            a.setCheckable(True)
+            a.setChecked(cb.isChecked())
+            a.toggled.connect(cb.setChecked)
+        menu.addSeparator()
+        for i, (name, _s) in enumerate(AGES):
+            a = menu.addAction(name)
+            a.setCheckable(True)
+            a.setChecked(i == self.age.currentIndex())
+            a.triggered.connect(lambda _c=False, n=i: self.age.setCurrentIndex(n))
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        wide = self.width() >= 780
+        for w in (*self._filter_chips(), self.age):
+            w.setVisible(wide)
+        self.filter_btn.setVisible(not wide)
+        self.count.setVisible(self.width() >= 520)  # squeezed any more, it's a meaningless sliver
 
     def _loaded(self, ok):
         self.ready = ok
@@ -326,8 +358,40 @@ class MapView(QWidget):
             self.count.setToolTip(f"{total} of {len(self.model.contacts)} contacts have a location")
             self.search.setStyleSheet("")
         self.count.setText(msg)
-        opts = {"labels": self.labels.isChecked(), "dark": dark, "colors": asdict(theme.current), "cluster": self.clusters}
+        opts = {"labels": self.labels.isChecked(), "dark": dark, "colors": asdict(theme.current), "cluster": not self.links_on}
         self.view.page().runJavaScript(f"setNodes({json.dumps(nodes)}, {json.dumps(opts)})")
+        self._sent = None  # the page was just redrawn
+        self._send_links()
+
+    def show_links(self, on: bool):
+        self.links_on = on
+        self.refresh()
+
+    def _send_links(self):
+        if not self.ready:
+            return
+        out = []
+        if self.links_on:
+            shown = set(self.shown) | {"self"}
+            links, missed = map_links(self.model)
+            out = [{"a": a, "b": b, "n": n} for (a, b), n in sorted(links.items()) if a in shown and b in shown]
+            self.count.setText(f"{self.count.text().split(' · links')[0]} · links: {len(out)}")
+            note = "Hops are short hashes, so a link can land on a different node that shares the hash."
+            if missed:
+                note += f"\n{missed} link{'s' * (missed != 1)} can't be drawn because a node has no location."
+            self.count.setToolTip(note)
+        if out != self._sent:
+            self._sent = out
+            self.view.page().runJavaScript(f"setLinks({json.dumps(out)})")
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.poll.start()
+        QTimer.singleShot(0, self.refresh)  # after the layout has given the page its size
+
+    def hideEvent(self, e):
+        self.poll.stop()
+        super().hideEvent(e)
 
     def go_to_search(self):
         """Enter: fly to the one match, or fit them all. An exact name wins."""
@@ -399,53 +463,12 @@ def map_links(model: Model) -> tuple[dict[tuple[str, str], int], int]:
     return dict(links), missed
 
 
-class NetworkMap(MapView):
-    """The Map tab's map, unclustered so everyone shows, with the links drawn."""
-    clusters = False
-    storage = "meshcore-network-map"
-
-    def __init__(self, *args):
-        super().__init__(*args)
-        self._sent = None
-        self.poll = QTimer(self, interval=5000, timeout=self._send_links)
-
-    def refresh(self):
-        super().refresh()
-        self._sent = None  # the page was just redrawn
-        self._send_links()
-
-    def _send_links(self):
-        if not self.ready:
-            return
-        shown = set(self.shown) | {"self"}
-        links, missed = map_links(self.model)
-        out = [{"a": a, "b": b, "n": n} for (a, b), n in sorted(links.items()) if a in shown and b in shown]
-        text = self.count.text().split(" · links")[0]
-        self.count.setText(f"{text} · links: {len(out)}")
-        note = "Hops are short hashes, so a link can land on a different node that shares the hash."
-        if missed:
-            note += f"\n{missed} link{'s' * (missed != 1)} can't be drawn because a node has no location."
-        self.count.setToolTip(note)
-        if out != self._sent:
-            self._sent = out
-            self.view.page().runJavaScript(f"setLinks({json.dumps(out)})")
-
-    def showEvent(self, e):
-        super().showEvent(e)
-        self.poll.start()
-        QTimer.singleShot(0, self.refresh)  # after the layout has given the page its size
-
-    def hideEvent(self, e):
-        self.poll.stop()
-        super().hideEvent(e)
-
-
-class NetworkTab(QWidget):
-    """The mesh two ways: on a map, or as a graph for nodes with no location."""
+class MapTab(QWidget):
+    """The Map / Network tab: the map, the map with its links, or the relay graph."""
 
     def __init__(self, model: Model, open_conv, action, stats):
         super().__init__()
-        self.map = NetworkMap(model, open_conv, action, stats)
+        self.map = MapView(model, open_conv, action, stats)
         self.graph = NetworkGraph(model)
         self.stack = QStackedWidget()
         self.stack.addWidget(self.map)
@@ -455,15 +478,30 @@ class NetworkTab(QWidget):
         lay.setSpacing(0)
         bar = QHBoxLayout()
         bar.setContentsMargins(16, 8, 16, 0)
-        group = QButtonGroup(self)
-        for i, name in enumerate(("Map", "Graph")):
+        self.group = QButtonGroup(self)
+        for i, name in enumerate(("Map", "Network", "Graph")):
             b = QCheckBox(name, checked=i == 0, objectName="chip")
-            group.addButton(b, i)
+            self.group.addButton(b, i)
             bar.addWidget(b)
         bar.addStretch(1)
-        group.idClicked.connect(self.stack.setCurrentIndex)
+        self.group.idClicked.connect(self._mode)
         lay.addLayout(bar)
         lay.addWidget(self.stack, 1)
+
+    def _mode(self, i: int):
+        self.stack.setCurrentWidget(self.graph if i == 2 else self.map)
+        if i < 2:
+            self.map.show_links(i == 1)
+
+    def set_compact(self, on: bool):
+        self.layout().itemAt(0).layout().setContentsMargins(*((6, 2, 6, 0) if on else (16, 8, 16, 0)))
+        self.map.layout().itemAt(0).layout().setContentsMargins(*((6, 2, 6, 2) if on else (16, 8, 16, 8)))
+
+    def show_map(self):
+        """Out of the graph, for something that needs the map on screen."""
+        if self.group.checkedId() == 2:
+            self.group.button(0).setChecked(True)
+            self._mode(0)
 
     def pulse(self, p: P.RawPacket):
         if self.stack.currentWidget() is self.map:

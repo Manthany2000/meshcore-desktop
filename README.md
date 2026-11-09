@@ -6,28 +6,43 @@ A desktop chat app for a MeshCore node running companion firmware, over Bluetoot
 
 ![MeshCore Desktop messages](docs/messages.png)
 
-| Map with node details | Repeater management |
+| Panels side by side | Map with node details |
 |---|---|
-| ![Map](docs/map.png) | ![Repeater](docs/repeater.png) |
-| **Dashboard** | **Network graph** |
-| ![Dashboard](docs/dashboard.png) | ![Network](docs/network.png) |
+| ![Panels](docs/panels.png) | ![Map](docs/map.png) |
+| **Network map with links** | **Relay graph** |
+| ![Network](docs/network.png) | ![Graph](docs/graph.png) |
+| **Repeater management** | **Live repeater stats** |
+| ![Repeater](docs/repeater.png) | ![Live](docs/live.png) |
 
 - Channels and direct messages, with unread counts and desktop notifications for DMs and @mentions
 - Replies (`@[Name]`, double-click or Ctrl+R a message), mentions highlighted
 - Repeats: how many relayed copies your node heard of each message (yours too), which
   repeaters relayed it, which you heard directly and at what SNR, and the path it took
 - Delivery status on DMs (✓✓ delivered with round-trip time, ✗ no ack, right-click → send again)
-- Contacts: type, hops, last heard, distance; reset route; message from the list
+- Contacts: type and last heard, click one for its hops and route; reset route; message from the list
 - Add `#hashtag` or private channels, remove channels
 - Map with type icons, clustering, live packet paths, and full details on hover or click
-- Dashboard with activity and a live packet feed
-- Network tab: a map of where everyone is with the links between them, or a graph of who relays through whom
+- Messages, map, repeater and dashboard as tiled panels: open several at once, close each individually, and drag a title onto another panel to swap them
+- Live traffic: every packet your connected node receives, as it arrives, on the Dashboard
+- Dashboard with nodes heard, busiest repeaters and channel activity
+- Map / Network tab: switch between the map, the map with the links between nodes, or a graph of who relays through whom
 - Repeater battery and noise history, kept each time you refresh a repeater
 - Light and dark themes that follow your system, with a choice of accent colours
+- Alerts when a new repeater or contact is heard for the first time, and a list of nodes found while the app was closed
+- Compact mode for small screens (toolbar button or Ctrl+M)
 - Sends zero-hop or flood adverts; sets the node's clock from the PC if it's behind
 - Messages saved per node (~/.local/share/meshcore-desktop on Linux, %LOCALAPPDATA%\MeshCore Desktop on
   Windows, or a `data` folder beside the packaged app); reconnects when the link drops
 - Runs on Linux (BlueZ) and Windows 10 1809+ (WinRT); pairing asks for the node's PIN in the app on both
+
+## Live traffic
+
+The Dashboard's **Live packets** feed shows every packet your connected node's radio receives, the moment it arrives: the
+time, packet type, hop count, SNR and the path it took. It includes traffic that isn't addressed to you, such as adverts,
+acks and other people's messages, so you can see how busy the mesh is around your node. The list and the Dashboard's packet
+count cover the current session.
+
+![Live packets on the Dashboard](docs/dashboard.png)
 
 ## Install
 
@@ -97,7 +112,7 @@ were queued on the node while nothing was connected have neither.
 
 In Contacts, right-click a repeater and choose **Manage repeater** to open the Repeater tab. Log in with its admin
 password to read its stats and run CLI commands; the guest password gets stats only. Once you're on its admin list, a
-blank password logs you back in. Zero-hop and Flood advert buttons make the repeater announce itself. The Settings page edits name, repeating, TX power, flood and advert limits, location and owner info: read the current values, change them, and Apply. Passwords are never saved or logged. Commands that could cut you off from a remote
+blank password logs you back in. Zero-hop and Flood advert buttons make the repeater announce itself. The Settings page edits name, repeating, TX power, flood and advert limits, location and owner info: read the current values, change them, and Apply. The Live page polls a repeater you're admin on for packet rates, airtime, noise and neighbours, and lists the packets your node heard it relay; a repeater can't stream its full traffic over the mesh. Passwords are never saved or logged. Commands that could cut you off from a remote
 repeater, such as `reboot` or `password`, ask first. In the simulator the passwords are `admin` and `guest`, and
 Library Roof never answers.
 

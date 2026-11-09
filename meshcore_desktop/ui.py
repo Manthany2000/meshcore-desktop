@@ -23,6 +23,7 @@ from . import protocol as P
 from . import theme
 from .admin import RepeaterPanel
 from .dashboard import Dashboard
+from .workspace import Workspace
 from .widgets import Radar, Toast, Welcome, battery_pixmap, fade_in, signal_html, signal_icon
 from .desktop import notify, settings, short_date
 from .pairing import PairingError
@@ -280,7 +281,8 @@ class ChatRow(QStyledItemDelegate):
     """A row in the chat list: avatar, name and unread badge, or a section heading."""
 
     def sizeHint(self, option, idx):
-        return QSize(option.rect.width(), 46 if idx.data(Qt.UserRole) else 30)
+        small = theme.compact
+        return QSize(option.rect.width(), (32 if small else 46) if idx.data(Qt.UserRole) else (22 if small else 30))
 
     def paint(self, p: QPainter, option, idx):
         conv, title, unread = idx.data(Qt.UserRole), idx.data(Qt.DisplayRole), idx.data(Qt.UserRole + 1) or 0
@@ -294,7 +296,7 @@ class ChatRow(QStyledItemDelegate):
             f.setPixelSize(11)
             p.setFont(f)
             p.setPen(QColor(t.dim))
-            p.drawText(r.adjusted(12, 8, 0, 0), Qt.AlignLeft | Qt.AlignVCenter, title)
+            p.drawText(r.adjusted(12, 2 if theme.compact else 8, 0, 0), Qt.AlignLeft | Qt.AlignVCenter, title)
             p.restore()
             return
         row = r.adjusted(2, 2, -2, -2)
@@ -306,7 +308,7 @@ class ChatRow(QStyledItemDelegate):
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(t.raised))
             p.drawRoundedRect(row, 11, 11)
-        d = 30
+        d = 22 if theme.compact else 30
         theme.draw_avatar(p, QRectF(row.left() + 7, row.center().y() - d / 2, d, d), title, conv.startswith("ch:"))
         right = row.right() - 10
         if unread:
@@ -332,6 +334,45 @@ class ChatRow(QStyledItemDelegate):
 
 
 # --- dialogs ---------------------------------------------------------------------
+
+class FoundAwayDialog(QDialog):
+    """Nodes that joined the radio's contact list while the app wasn't connected.
+    Not modal: it mustn't get in the way of whatever the user sat down to do."""
+
+    def __init__(self, win, found: list[P.Contact]):
+        super().__init__(win)
+        self.win = win
+        self.setWindowTitle("Found while you were away")
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.resize(380, 300)
+        lay = QVBoxLayout(self)
+        n = len(found)
+        lay.addWidget(QLabel(f"Your radio added {n} new node{'s' * (n != 1)} while the app was closed.\n"
+                             "Double-click one to see it on the map, or to message it if it has no location.",
+                             objectName="dim", wordWrap=True))
+        tree = QTreeWidget(rootIsDecorated=False, allColumnsShowFocus=True)
+        tree.setHeaderLabels(["Name", "Type", "Heard"])
+        tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        age = lambda c: (a if (a := win.model.contact_age(c)) is not None else 1e12)
+        for c in sorted(found, key=age):
+            it = QTreeWidgetItem([c.name or c.key[:3].hex(), TYPE_NAMES.get(c.type, "?"), ago(win.model.contact_age(c))])
+            it.setData(0, Qt.UserRole, c.prefix)
+            tree.addTopLevelItem(it)
+        tree.itemDoubleClicked.connect(self._open)
+        lay.addWidget(tree, 1)
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        bb.rejected.connect(self.close)
+        lay.addWidget(bb)
+
+    def _open(self, it: QTreeWidgetItem, _col: int):
+        c = self.win.model.contacts.get(it.data(0, Qt.UserRole))
+        if c is None:
+            return
+        if c.lat or c.lon:
+            self.win.show_on_map(c)
+        else:
+            self.win.open_conv(dm_conv(c.prefix))
+
 
 class ConnectDialog(QDialog):
     def __init__(self, parent, last: str):
@@ -537,6 +578,9 @@ class MainWindow(QMainWindow):
         spacer.setSizePolicy(spacer.sizePolicy().horizontalPolicy().Expanding,
                              spacer.sizePolicy().verticalPolicy().Preferred)
         tb.addWidget(spacer)
+        self.compact_act = QAction("Compact", self, checkable=True, shortcut="Ctrl+M", toolTip="Tighter layout for small screens (Ctrl+M)",
+                                   toggled=self.set_compact)
+        tb.addAction(self.compact_act)
         accent = QToolButton(text="Accent ▾")
         accent.setPopupMode(QToolButton.InstantPopup)
         am = QMenu(accent)
@@ -589,22 +633,27 @@ class MainWindow(QMainWindow):
         self.contact_filter.textChanged.connect(self._refresh_contacts)
         cv.addWidget(self.contact_filter)
         self.contacts = QTreeWidget()
-        self.contacts.setHeaderLabels(["Name", "Type", "Hops", "Heard", "km"])
+        self.contacts.setHeaderLabels(["Name", "Type", "Heard"])
         self.contacts.setAllColumnsShowFocus(True)
         self.contacts.setRootIsDecorated(False)
         self.contacts.setSortingEnabled(True)
         self.contacts.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.contacts.sortByColumn(3, Qt.AscendingOrder)
+        self.contacts.sortByColumn(2, Qt.AscendingOrder)
         self.contacts.header().setSectionResizeMode(0, QHeaderView.Stretch)
         # Just wide enough for their contents, so the name gets the rest.
         fm = self.contacts.fontMetrics()
-        for i, sample in enumerate(("Repeater", "flood", "30 min ▾", "99.9"), 1):
+        for i, sample in enumerate(("Repeater", "30 min ▾"), 1):
             self.contacts.header().setSectionResizeMode(i, QHeaderView.Fixed)
             self.contacts.header().resizeSection(i, fm.horizontalAdvance(sample) + 12)
         self.contacts.itemDoubleClicked.connect(lambda it, _c: self.open_conv(it.data(0, Qt.UserRole)))
         self.contacts.setContextMenuPolicy(Qt.CustomContextMenu)
         self.contacts.customContextMenuRequested.connect(self._contact_menu)
         cv.addWidget(self.contacts)
+        self.contact_route = QLabel("", objectName="dim", wordWrap=True, visible=False)
+        self.contact_route.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._picked_contact: bytes | None = None
+        self.contacts.currentItemChanged.connect(lambda it, _old: self._show_contact_route(it))
+        cv.addWidget(self.contact_route)
         self.tabs.addTab(cw, "Contacts")
         split.addWidget(self.tabs)
 
@@ -664,19 +713,16 @@ class MainWindow(QMainWindow):
         comp.addWidget(self.counter)
         comp.addWidget(self.send_btn)
         mv.addLayout(comp)
-        self.center = QTabWidget()
-        self.center.setDocumentMode(True)
+        self.center = Workspace()
         self.center.addTab(mid, "Messages")
-        from .mapview import MapView, NetworkTab
-        self.map = MapView(self.model, self.open_conv, self._map_action, self._repeater_stats)
-        self.center.addTab(self.map, "Map")
+        from .mapview import MapTab
+        self.map_tab = MapTab(self.model, self.open_conv, self._map_action, self._repeater_stats)
+        self.map = self.map_tab.map
+        self.center.addTab(self.map_tab, "Map / Network")
         self.admin = RepeaterPanel(self)
         self.center.addTab(self.admin, "Repeater")
         self.dashboard = Dashboard(self.model)
         self.center.addTab(self.dashboard, "Dashboard")
-        self.network = NetworkTab(self.model, self.open_conv, self._map_action, self._repeater_stats)
-        self.center.addTab(self.network, "Network")
-        self.center.currentChanged.connect(self._center_tab)
         split.addWidget(self.center)
 
         # Right: the selected message's path and repeaters.
@@ -688,6 +734,16 @@ class MainWindow(QMainWindow):
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
         split.setStretchFactor(2, 0)
+        saved = [int(x) for x in str(self.settings.value("panes", "")).split(",") if x.isdigit() and int(x) < 4]
+        self.center.restore(str(self.settings.value("pane_layout", "")))
+        for i in saved or [0]:
+            self.center.set_open(i, True)
+        self._panes_changed()
+        self.center.changed.connect(self._panes_changed)
+        self.center.opened.connect(lambda w: w is self.map_tab or fade_in(w))  # graphics effects break web views
+        self.main_split = split
+        if self.settings.value("compact", False, type=bool):
+            self.compact_act.setChecked(True)
 
         QAction("Reply", self, shortcut=QKeySequence("Ctrl+R"), triggered=self._reply_current)
         esc = QAction(self, shortcut=QKeySequence("Escape"), triggered=self.cancel_reply)
@@ -713,6 +769,18 @@ class MainWindow(QMainWindow):
     def toast(self, text: str, bad: bool = False):
         self.toaster.show_text(text, bad)
 
+    def set_compact(self, on: bool):
+        self.settings.setValue("compact", on)
+        theme.set_compact(QApplication.instance(), on)
+        self.center.set_compact(on)
+        self.map_tab.set_compact(on)
+        self._panes_changed()
+        self.tabs.setMinimumWidth(220 if on else 330)
+        a, b, c = self.main_split.sizes()
+        side, details = 230 if on else 340, 0 if on else 290
+        self.main_split.setSizes([side, a + b + c - side - details, details])
+        self.chats.doItemsLayout()  # its rows change height
+
     def set_accent(self, name: str):
         self.settings.setValue("accent", name)
         theme.apply(QApplication.instance(), theme.current.dark, name)
@@ -722,7 +790,6 @@ class MainWindow(QMainWindow):
         self.welcome.retheme()
         self._node_label()
         self.map.refresh()
-        self.network.map.refresh()
         self.view.viewport().update()
 
     def choose_device(self):
@@ -741,7 +808,7 @@ class MainWindow(QMainWindow):
             await self.session.stop()
         if self.address == SIM:
             from .sim import SimTransport
-            t = SimTransport()
+            t = SimTransport(visitor=True)
         else:
             t = BleTransport(self.address, self.ask_pin)
         self.session = Session(self.model, t, self.set_state)
@@ -829,7 +896,7 @@ class MainWindow(QMainWindow):
         self.state_label.setText("● " + text)
         theme.set_tone(self.state_label, {"ready": "ok", "disconnected": "off"}.get(state, "busy"))
         ready = state == "ready"
-        self.connect_act.setEnabled(state == "disconnected")
+        self.connect_act.setVisible(state == "disconnected")
         self.disconnect_act.setEnabled(state != "disconnected")
         self.unpair_act.setEnabled(bool(self.address) and self.address != SIM)
         self.advert_btn.setEnabled(ready)
@@ -843,6 +910,7 @@ class MainWindow(QMainWindow):
         if ready:
             self._refresh_lists()
             self._refresh_contacts()
+            self._show_found_away()
 
     # --- model events ---------------------------------------------------------------
 
@@ -877,13 +945,12 @@ class MainWindow(QMainWindow):
                 self._maps_changed()
         elif ev == "packet":
             self.dashboard.add_packet(obj)
-            if self.center.currentWidget() is self.map:
-                self.map.pulse(obj)
-            elif self.center.currentWidget() is self.network:
-                self.network.pulse(obj)
+            self.admin.live.add_packet(obj)
+            if self.center.is_open(self.map_tab):
+                self.map_tab.pulse(obj)
         elif ev == "new_contact":
             if self.state == "ready":
-                self.toast(f"New node heard: {obj.name or obj.key[:3].hex()}")
+                self._new_contact_alert(obj)
         elif ev == "cli_late":
             self.admin.late_reply(obj)
         elif ev == "node":
@@ -892,12 +959,33 @@ class MainWindow(QMainWindow):
 
     def _maps_changed(self):
         self.map.schedule()
-        self.network.map.schedule()
 
     def _contacts_timer(self):
         if not hasattr(self, "_ct"):
             self._ct = QTimer(self, singleShot=True, interval=1000, timeout=self._refresh_contacts)
         self._ct.start()
+
+    def _show_found_away(self):
+        found = self.model.take_found_away()
+        if not found:
+            return
+        n = len(found)
+        self.toast(f"{n} new node{'s' * (n != 1)} found while you were away")
+        if not self.isActiveWindow():
+            notify(self, "Found while you were away", ", ".join((c.name or c.key[:3].hex()) for c in found[:5])
+                   + (f" and {n - 5} more" if n > 5 else ""))
+        QApplication.alert(self)
+        self.found_dialog = FoundAwayDialog(self, found)
+        self.found_dialog.show()
+
+    def _new_contact_alert(self, c: P.Contact):
+        name = c.name or c.key[:3].hex()
+        title = "New repeater found" if c.type == P.ADV_REPEATER else "New contact found"
+        self.toast(f"{title}: {name}")
+        if not self.isActiveWindow():
+            kind = "" if c.type in (P.ADV_REPEATER, P.ADV_CHAT) else f" ({TYPE_NAMES.get(c.type, 'unknown type')})"
+            notify(self, title, name + kind)
+        QApplication.alert(self)
 
     def _notify(self, m: Message):
         me = self.model.self_info.name if self.model.self_info else ""
@@ -970,27 +1058,42 @@ class MainWindow(QMainWindow):
 
     def _refresh_contacts(self):
         q = self.contact_filter.text().lower()
+        self.contacts.blockSignals(True)  # a refresh isn't the user picking someone else
         self.contacts.setSortingEnabled(False)
         self.contacts.clear()
+        picked = None
         for c in self.model.contacts.values():
             if q and q not in c.name.lower():
                 continue
             age = self.model.contact_age(c)
-            km = self.model.distance_km(c)
-            it = SortItem([c.name or c.key[:3].hex(), TYPE_NAMES.get(c.type, "?"),
-                           "flood" if c.hops < 0 else str(c.hops), ago(age), f"{km:.1f}" if km is not None else ""])
+            it = SortItem([c.name or c.key[:3].hex(), TYPE_NAMES.get(c.type, "?"), ago(age)])
+            if c.prefix == self._picked_contact:
+                picked = it
             it.setData(0, Qt.UserRole, dm_conv(c.prefix))
             if c.prefix in self.model.last_snr:
                 it.setIcon(0, signal_icon(self.model.last_snr[c.prefix]))
                 it.setToolTip(1, f"Last SNR {self.model.last_snr[c.prefix]:.1f} dB")
             it.setData(0, Qt.UserRole + 1, c)
-            it.sort_keys = {2: c.hops if c.hops >= 0 else 99, 3: age if age is not None else 1e12,
-                            4: km if km is not None else 1e9}
-            it.setToolTip(0, f"{c.key.hex()}\n" + (f"Route: {' → '.join(h.hex() for h in c.path.hops())}"
-                                                  if c.hops > 0 else ""))
+            it.sort_keys = {2: age if age is not None else 1e12}
+            it.setToolTip(0, c.key.hex())
             self.contacts.addTopLevelItem(it)
         self.contacts.setSortingEnabled(True)
+        if picked:
+            self.contacts.setCurrentItem(picked)
+        self.contacts.blockSignals(False)
+        self._show_contact_route(picked)
         self.tabs.setTabText(1, f"Contacts ({len(self.model.contacts)})")
+
+    def _show_contact_route(self, it: QTreeWidgetItem | None):
+        """The hops only appear for the contact that's been clicked."""
+        self.contact_route.setVisible(it is not None)
+        if it is None:
+            return
+        c: P.Contact = it.data(0, Qt.UserRole + 1)
+        self._picked_contact = c.prefix
+        self.contact_route.setText(f"{c.name or c.key[:3].hex()}: " + (
+            "no known route, sends by flood" if c.hops < 0 else "direct, 0 hops" if c.hops == 0 else
+            f"{c.hops} hop{'s' * (c.hops != 1)} via " + " → ".join(self._hop(h.hex()) for h in c.path.hops())))
 
     def _contact_menu(self, pos: QPoint):
         it = self.contacts.itemAt(pos)
@@ -1041,15 +1144,14 @@ class MainWindow(QMainWindow):
 
     # --- conversation -----------------------------------------------------------------
 
-    def _center_tab(self, i: int):
-        self.details.setVisible(i == 0)
-        if self.center.widget(i) not in (self.map, self.network):  # graphics effects break web views
-            fade_in(self.center.widget(i))
-        if i == 1:
-            self.map.refresh()
+    def _panes_changed(self):
+        self.details.setVisible(0 in self.center.open_indexes() and not theme.compact)  # it's about the selected message
+        self.settings.setValue("panes", ",".join(map(str, self.center.open_indexes())))
+        self.settings.setValue("pane_layout", self.center.state())
 
     def show_on_map(self, c: P.Contact):
-        self.center.setCurrentIndex(1)
+        self.center.setCurrentWidget(self.map_tab)
+        self.map_tab.show_map()
         self.map.focus(c.prefix.hex())
 
     def _map_action(self, what: str, c: P.Contact):
