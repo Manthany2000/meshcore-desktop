@@ -3,7 +3,7 @@ a stylesheet built from them. Follows the system's light or dark setting."""
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPalette, QPen, QPixmap
@@ -35,7 +35,20 @@ LIGHT = Colors(False, "#f4f5f7", "#ffffff", "#eceef1", "#ced3db", "#1c2128", "#5
 DARK = Colors(True, "#14171b", "#1b1f25", "#262b33", "#3b4350", "#e6e9ee", "#9aa3b2",
               "#2dbdab", "#06201c", "#17423c", "#f0665c", "#4cc38a", "#f0b429", "#46a8e6")
 
+# name: (light mode, dark mode), each what the accent changes.
+ACCENTS = {
+    "Teal": ({}, {}),
+    "Violet": (dict(accent="#6d4fd1", accent2="#b0369c", on_accent="#ffffff", accent_soft="#e7e1fa"),
+               dict(accent="#a78bfa", accent2="#e879c8", on_accent="#1a1033", accent_soft="#32285c")),
+    "Blue": (dict(accent="#1f6fd1", accent2="#0a7c98", on_accent="#ffffff", accent_soft="#dbe9fb"),
+             dict(accent="#5aa9f5", accent2="#36c5d9", on_accent="#06182b", accent_soft="#1b3a5c")),
+    "Sunset": (dict(accent="#c2410c", accent2="#b91c5c", on_accent="#ffffff", accent_soft="#fbe3d6"),
+               dict(accent="#fb923c", accent2="#f472b6", on_accent="#2a1204", accent_soft="#4a2a18")),
+}
+
 current = LIGHT
+accent_name = "Teal"
+on_change: list = []  # called after the look changes
 
 
 def _palette(c: Colors) -> QPalette:
@@ -126,6 +139,12 @@ def _sheet(c: Colors) -> str:
     QCheckBox#chip:checked {{ background: {c.accent_soft}; border-color: {c.accent}; color: {c.text}; font-weight: 600; }}
     QCheckBox#chip::indicator {{ width: 0; height: 0; }}
 
+    QFrame#tile {{ background: {c.surface}; border: 1px solid {c.border}; border-radius: 12px; }}
+    QLabel#big {{ font-size: 26px; font-weight: 700; color: {c.text}; }}
+    QLabel#hero {{ font-size: 30px; font-weight: 700; color: {c.text}; }}
+    QLabel#toast {{ background: {c.surface}; color: {c.text}; border: 1px solid {c.accent}; border-radius: 17px;
+                    padding: 8px 18px; font-weight: 600; }}
+
     QGroupBox {{ background: {c.surface}; border: 1px solid {c.border}; border-radius: 12px;
                  margin-top: 22px; padding: 8px; }}
     QGroupBox::title {{ subcontrol-origin: margin; left: 4px; top: 2px; color: {c.text}; font-weight: 600; }}
@@ -207,20 +226,24 @@ def set_tone(label, tone: str):
     label.style().polish(label)
 
 
-def apply(app: QApplication, dark: bool):
-    global current
-    current = DARK if dark else LIGHT
+def apply(app: QApplication, dark: bool, accent: str | None = None):
+    global current, accent_name
+    if accent in ACCENTS:
+        accent_name = accent
+    current = replace(DARK if dark else LIGHT, **ACCENTS[accent_name][dark])
     app.setStyle("Fusion")  # the one built-in style that honours all of this on Linux and Windows
     app.setPalette(_palette(current))
     app.setStyleSheet(_sheet(current))
+    for fn in list(on_change):
+        fn()
 
 
-def follow_system(app: QApplication):
+def follow_system(app: QApplication, accent: str = "Teal"):
     """Must run before apply() changes the palette it reads."""
     scheme = app.styleHints().colorScheme()
     dark = scheme == Qt.ColorScheme.Dark if scheme != Qt.ColorScheme.Unknown else (
         app.palette().color(QPalette.Window).lightness() < 128)
-    apply(app, dark)
+    apply(app, dark, accent)
 
     def changed(s):
         if s != Qt.ColorScheme.Unknown and (s == Qt.ColorScheme.Dark) != current.dark:

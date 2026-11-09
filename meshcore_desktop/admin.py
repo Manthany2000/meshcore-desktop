@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (QComboBox, QGraphicsDropShadowEffect, QGridLayout
 
 from . import protocol as P
 from . import theme
+from .widgets import BatteryGauge, LineChart
 
 log = logging.getLogger("admin")
 
@@ -112,6 +113,7 @@ class Remote:
     is_admin: bool | None = None  # None: an old repeater that doesn't say
     stats: dict[str, str] = field(default_factory=dict)
     settings: dict[str, str] = field(default_factory=dict)  # as last read from the repeater
+    pct: int | None = None  # battery, from the latest status
     console: str = ""
 
 
@@ -208,6 +210,8 @@ class RepeaterPanel(QWidget):
         self.status_btn = QPushButton("Refresh")
         self.status_btn.clicked.connect(self.refresh)
         grid.addWidget(self.status_btn, (len(STAT_ROWS) - 1) // 2, 3, Qt.AlignRight)  # shares the Updated row
+        self.gauge = BatteryGauge()
+        grid.addWidget(self.gauge, 0, 4, (len(STAT_ROWS) + 1) // 2, 1, Qt.AlignCenter)
         box.setGraphicsEffect(QGraphicsDropShadowEffect(blurRadius=18, xOffset=0, yOffset=2, color=QColor(0, 0, 0, 45)))
         v.addWidget(box)
 
@@ -241,7 +245,22 @@ class RepeaterPanel(QWidget):
         self.inner = QTabWidget()
         self.inner.addTab(console_page, "Console")
         self.inner.addTab(self._settings_page(), "Settings")
+        self.inner.addTab(self._history_page(), "History")
         v.addWidget(self.inner, 1)
+
+    def _history_page(self) -> QWidget:
+        page = QWidget()
+        v = QVBoxLayout(page)
+        self.batt_chart = LineChart("Battery", "V", lambda x: f"{x:.2f}")
+        self.noise_chart = LineChart("Noise floor", "dBm", lambda x: f"{x:.0f}")
+        v.addWidget(self.batt_chart, 1)
+        v.addWidget(self.noise_chart, 1)
+        return page
+
+    def _load_history(self, c: P.Contact):
+        rows = self.win.model.repeater_history(c.prefix)
+        self.batt_chart.set_points([(r[0], r[1] / 1000) for r in rows if r[1]])
+        self.noise_chart.set_points([(r[0], r[2]) for r in rows])
 
     def _settings_page(self) -> QWidget:
         page = QWidget()
@@ -327,6 +346,8 @@ class RepeaterPanel(QWidget):
             label.setText(r.stats.get(key, "—"))
         for s in SETTINGS:
             self._fill(s)
+        self.gauge.set_percent(r.pct)
+        self._load_history(c)
         self._login_state()
         self._sync()
 
@@ -426,7 +447,11 @@ class RepeaterPanel(QWidget):
             return
         r = self.remotes.setdefault(c.prefix, Remote())
         r.stats = stat_text(f.stats)
+        r.pct = P.batt_percent(f.stats["batt_mv"]) if f.stats["batt_mv"] else None
+        self.win.model.record_repeater(c.prefix, f.stats)
         if self._showing(c):
+            self.gauge.set_percent(r.pct)
+            self._load_history(c)
             for key, label in self.values.items():
                 label.setText(r.stats.get(key, "—"))
             self._login_state()
@@ -477,6 +502,8 @@ class RepeaterPanel(QWidget):
             return
         self._log(c, f.msg.text)
         ok = f.msg.text.startswith("OK")
+        if ok:
+            self.win.toast(f"{c.name}: {kind.lower()} advert sent")
         self._report(c, f"{kind} advert sent." if ok else f"The repeater said: {f.msg.text}", not ok)
 
     def _log(self, c: P.Contact, line: str):

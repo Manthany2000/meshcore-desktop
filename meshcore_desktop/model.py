@@ -101,6 +101,8 @@ class Model:
         self.last_read: dict[str, float] = {}
         self.raw_log: deque = deque(maxlen=64)  # [packet, at, claimed]
         self.next_temp = -1
+        self.packets: deque = deque(maxlen=2000)  # (at, RawPacket), this session only
+        self.last_snr: dict[bytes, float] = {}  # prefix -> SNR of its latest message
 
     # --- plumbing -----------------------------------------------------------
 
@@ -123,6 +125,8 @@ class Model:
             CREATE TABLE IF NOT EXISTS channels (idx INTEGER PRIMARY KEY, name TEXT);
             CREATE TABLE IF NOT EXISTS contacts (key TEXT PRIMARY KEY, name TEXT, type INT);
             CREATE TABLE IF NOT EXISTS reads (conv TEXT PRIMARY KEY, at REAL);
+            CREATE TABLE IF NOT EXISTS repeater_stats (prefix TEXT, at REAL, batt_mv INT, noise_floor INT, last_rssi INT);
+            CREATE INDEX IF NOT EXISTS repeater_stats_key ON repeater_stats(prefix, at);
         """)
         self.messages.clear()
         self.by_id.clear()
@@ -295,6 +299,8 @@ class Model:
 
     def _on_raw(self, p: P.RawPacket):
         now = time.time()
+        self.packets.append((now, p))
+        self.emit("packet", p)
         for m in reversed(self.messages):
             if not m.live or now - m.at > REPEAT_WINDOW_S:
                 continue
@@ -325,6 +331,7 @@ class Model:
             self.emit("node")
         elif k == "contact":
             c = f.contact
+            known = c.prefix in self.contacts
             self.contacts[c.prefix] = c
             if f.is_new:
                 self.heard[c.prefix] = time.time()
@@ -333,6 +340,8 @@ class Model:
                 if f.is_new:
                     self.db.commit()
             self.emit("contact", c)
+            if f.is_new and not known:
+                self.emit("new_contact", c)
         elif k == "contacts_end":
             if self.db:
                 self.db.commit()
@@ -381,11 +390,31 @@ class Model:
         # A message proves its sender is around.
         if not t.is_channel:
             self.heard[t.key[:P.KEY_PREFIX]] = at
+            if t.snr is not None:
+                self.last_snr[t.key[:P.KEY_PREFIX]] = t.snr
         else:
             for c in self.contacts.values():
                 if c.name == t.who:
                     self.heard[c.prefix] = at
+                    if t.snr is not None:
+                        self.last_snr[c.prefix] = t.snr
                     break
+
+    # --- repeater history ---------------------------------------------------
+
+    def record_repeater(self, prefix: bytes, stats: dict):
+        if self.db:
+            self.db.execute("INSERT INTO repeater_stats VALUES (?,?,?,?,?)", (
+                prefix.hex(), time.time(), stats["batt_mv"], stats["noise_floor"], stats["last_rssi"]))
+            self.db.commit()
+
+    def repeater_history(self, prefix: bytes, limit: int = 500) -> list[tuple]:
+        """(at, batt_mv, noise_floor, last_rssi), oldest first."""
+        if not self.db:
+            return []
+        rows = self.db.execute("SELECT at, batt_mv, noise_floor, last_rssi FROM repeater_stats WHERE prefix=?"
+                               " ORDER BY at DESC LIMIT ?", (prefix.hex(), limit)).fetchall()
+        return rows[::-1]
 
     # --- outgoing -----------------------------------------------------------
 

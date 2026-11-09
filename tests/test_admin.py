@@ -160,3 +160,35 @@ def test_repeater_adverts(tmp_path):
         assert (await s.cli(KEY, "advert.zerohop")).msg.text == "OK - zerohop advert sent"
         await s.stop()
     asyncio.run(go())
+
+
+def test_signal_and_history(tmp_path):
+    from meshcore_desktop.widgets import signal_level
+    assert [signal_level(v) for v in (-20, -10, -5, 2, 9)] == [0, 1, 2, 3, 4]
+    m = Model(tmp_path)
+    m.open_for_node(KEY)
+    m.record_repeater(KEY[:6], {"batt_mv": 3900, "noise_floor": -110, "last_rssi": -70})
+    m.record_repeater(KEY[:6], {"batt_mv": 3850, "noise_floor": -105, "last_rssi": -71})
+    assert [r[1] for r in m.repeater_history(KEY[:6])] == [3900, 3850]
+    assert m.repeater_history(b"\0" * 6) == []
+
+
+def test_dashboard_data(tmp_path):
+    from meshcore_desktop.dashboard import ME, busiest_repeaters, channel_activity, mesh_links, packet_line, summary
+    async def go():
+        s, t = _session(tmp_path)
+        await s.start()
+        m = s.model
+        out = m.add_outgoing("ch:0", "hello")
+        m.apply(P.decode(t._log_rx(P.PAYLOAD_GRP_TXT, [KEY[:1]], P.encrypt_group(S.PUBLIC_SECRET, out.wire_time, "SimNode", "hello"), 3.0)))
+        m._changed(out)
+        got = summary(m)
+        assert got["repeaters"] == 4 and got["packets"] == 1 and got["messages"] >= 2
+        assert busiest_repeaters(m)[0] == ("Ridge Repeater", 1)
+        assert ("Public", 2) in channel_activity(m)
+        weight, links = mesh_links(m)
+        assert ME in weight and tuple(sorted((ME, KEY[:1].hex()))) in links
+        when, raw = m.packets[-1]
+        assert "Channel msg" in packet_line(when, raw) and KEY[:1].hex() in packet_line(when, raw)
+        await s.stop()
+    asyncio.run(go())

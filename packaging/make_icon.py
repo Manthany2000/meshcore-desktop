@@ -14,12 +14,17 @@ img.fill(Qt.transparent)
 p = QPainter(img)
 p.setRenderHint(QPainter.Antialiasing)
 g = QLinearGradient(0, 0, S, S)
-g.setColorAt(0, QColor("#1f8a70"))
-g.setColorAt(1, QColor("#0b4f6c"))
+g.setColorAt(0, QColor("#2dbdab"))
+g.setColorAt(1, QColor("#0b6fa4"))
 p.setBrush(g)
 p.setPen(Qt.NoPen)
 p.drawRoundedRect(QRectF(8, 8, S - 16, S - 16), 52, 52)
-nodes = [QPointF(78, 170), QPointF(178, 178), QPointF(128, 78)]
+nodes = [QPointF(70, 186), QPointF(186, 186), QPointF(128, 104)]
+# Radio waves off the top node.
+p.setBrush(Qt.NoBrush)
+for r, alpha in ((46, 230), (72, 130)):
+    p.setPen(QPen(QColor(255, 255, 255, alpha), 11, Qt.SolidLine, Qt.RoundCap))
+    p.drawArc(QRectF(128 - r, 104 - r, 2 * r, 2 * r), 50 * 16, 80 * 16)
 p.setPen(QPen(QColor(255, 255, 255, 210), 14, Qt.SolidLine, Qt.RoundCap))
 for i in range(3):
     p.drawLine(nodes[i], nodes[(i + 1) % 3])
@@ -27,7 +32,7 @@ p.setPen(Qt.NoPen)
 p.setBrush(QColor("white"))
 for n in nodes:
     p.drawEllipse(n, 26, 26)
-p.setBrush(QColor("#1f8a70"))
+p.setBrush(QColor("#0d7f74"))
 p.drawEllipse(nodes[2], 11, 11)
 p.end()
 png = root / "meshcore_desktop/icons/app.png"

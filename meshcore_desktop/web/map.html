@@ -3,11 +3,24 @@
 <head>
 <meta charset="utf-8">
 <link rel="stylesheet" href="leaflet.css">
+<link rel="stylesheet" href="MarkerCluster.css">
 <script src="leaflet.js"></script>
+<script src="leaflet.markercluster.js"></script>
 <style>
   html, body, #map { margin: 0; height: 100%; background: #aad3df; }
-  body.dark #map { background: #1b1f24; }
-  body.dark .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9); }
+  body.dark #map { background: var(--bg); }
+  body.dark .leaflet-tile-pane { filter: invert(1) hue-rotate(195deg) brightness(.82) contrast(.88) saturate(.45); }
+  .pin-wrap { background: none; border: none; }
+  .pin { width: 26px; height: 26px; box-sizing: border-box; border-radius: 50%; border: 2px solid #fff; display: flex;
+         align-items: center; justify-content: center; box-shadow: 0 1px 5px rgba(0,0,0,.45); }
+  .pin svg { width: 15px; height: 15px; }
+  .pin.stale { opacity: .5; }
+  .pin.fresh { animation: glow 2.2s ease-in-out infinite; }
+  @keyframes glow { 0%, 100% { box-shadow: 0 0 0 0 var(--glow); } 50% { box-shadow: 0 0 0 7px transparent, 0 0 12px 3px var(--glow); } }
+  .cl { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+        font: 700 13px system-ui, sans-serif; color: var(--on_accent); border: 2px solid rgba(255,255,255,.85);
+        box-sizing: border-box; background: linear-gradient(135deg, var(--accent), var(--accent2));
+        box-shadow: 0 2px 8px rgba(0,0,0,.4); }
   body { position: relative; overflow: hidden; }
   #hover, #panel { font: 13px/1.4 system-ui, sans-serif; color: var(--text); background: var(--surface);
                    border: 1px solid var(--border); box-sizing: border-box; z-index: 1100; position: absolute; }
@@ -64,6 +77,19 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
 const nodes = L.layerGroup().addTo(map);
 const route = L.layerGroup().addTo(map);
 const ring = L.layerGroup().addTo(map);
+const fx = L.layerGroup().addTo(map);
+const cluster = L.markerClusterGroup({
+  maxClusterRadius: 44, disableClusteringAtZoom: 13, showCoverageOnHover: false,
+  iconCreateFunction: c => L.divIcon({className: "pin-wrap", iconSize: [38, 38],
+    html: `<div class="cl">${c.getChildCount()}</div>`})
+}).addTo(map);
+const GLYPHS = {
+  1: '<circle cx="8" cy="5" r="3"/><path d="M2.5 14c0-3 2.5-5 5.5-5s5.5 2 5.5 5z"/>',
+  2: '<circle cx="8" cy="3.5" r="2"/><path d="M8 5 4.5 15h1.8l.6-2h2.2l.6 2h1.8z"/>',
+  3: '<path d="M2 3h12v8H7l-3 3v-3H2z"/>',
+  4: '<circle cx="8" cy="8" r="2.4"/><circle cx="8" cy="8" r="5.6" fill="none" stroke="#fff" stroke-width="1.5"/>',
+  self: '<path d="M8 1.5 10 6l4.8.4-3.7 3.1 1.2 4.8L8 11.7l-4.3 2.6 1.2-4.8L1.2 6.4 6 6z"/>'
+};
 let markers = {}, fitted = false, showLabels = true, last = null, accent = "#0d7f74";
 
 const legend = L.control({position: "bottomleft"});
@@ -83,6 +109,13 @@ function esc(s) { return String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": 
 function sections(n) {
   return n.sections.map(s => `<h4>${esc(s.title)}</h4><dl>` +
     s.rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("") + `</dl>`).join("");
+}
+
+function pin(n) {
+  const glyph = n.self ? GLYPHS.self : (GLYPHS[n.type] || GLYPHS[4]);
+  const cls = "pin" + (n.stale ? " stale" : "") + (n.fresh ? " fresh" : "");
+  return L.divIcon({className: "pin-wrap", iconSize: [26, 26], iconAnchor: [13, 13],
+    html: `<div class="${cls}" style="background:${color(n)};--glow:${color(n)}"><svg viewBox="0 0 16 16" fill="#fff">${glyph}</svg></div>`});
 }
 
 function color(n) { return n.self ? COLORS.self : (COLORS[n.type] || "#888"); }
@@ -160,21 +193,20 @@ function setNodes(data, opts) {
   accent = opts.colors.accent;
   hideHover();  // its marker is about to be replaced
   nodes.clearLayers();
+  cluster.clearLayers();
   markers = {};
-  const pts = [];
+  const pts = [], batch = [];
   for (const n of data) {
-    const m = L.circleMarker([n.lat, n.lon], {
-      radius: n.self ? 9 : n.type === 2 ? 7 : 6, color: "#000", weight: 1.5, opacity: n.stale ? 0.4 : 0.9,
-      fillColor: color(n), fillOpacity: n.stale ? 0.35 : 0.9, bubblingMouseEvents: false
-    });
+    const m = L.marker([n.lat, n.lon], {icon: pin(n), zIndexOffset: n.self ? 1000 : 0});
     m.on("mouseover", e => showHover(n, e.containerPoint));
     m.on("mouseout", hideHover);
     m.on("click", () => openPanel(n));
-    if (showLabels) m.bindTooltip(esc(n.name), {permanent: true, direction: "right", offset: [8, 0], className: "label"});
-    m.addTo(nodes);
+    if (showLabels) m.bindTooltip(esc(n.name), {permanent: true, direction: "right", offset: [14, 0], className: "label"});
+    if (n.self) m.addTo(nodes); else batch.push(m);
     markers[n.key] = m;
     pts.push([n.lat, n.lon]);
   }
+  cluster.addLayers(batch);
   map.invalidateSize();  // the tab may have been hidden when the map last measured itself
   if (!fitted && pts.length && map.getSize().x > 300) { fit(); fitted = true; }  // not while it's hidden
   if (selected) {  // keep the open panel current; a node filtered away just loses its ring
@@ -193,8 +225,9 @@ function fit() {
 function focusNode(key) {
   const m = markers[key];
   if (!m) return false;
-  map.setView(m.getLatLng(), Math.max(map.getZoom(), 11));
-  openPanel(last.find(x => x.key === key));
+  const n = last.find(x => x.key === key);
+  if (cluster.hasLayer(m)) cluster.zoomToShowLayer(m, () => openPanel(n));
+  else { map.setView(m.getLatLng(), Math.max(map.getZoom(), 11)); openPanel(n); }
   return true;
 }
 
@@ -210,6 +243,41 @@ function showRoute(key) {
   L.polyline(pts, {color: "#f0b429", weight: 4, opacity: 0.85, dashArray: (n.route || []).some(h => !h) ? "8 6" : null})
     .addTo(route);
   map.fitBounds(L.latLngBounds(pts).pad(0.2), {maxZoom: 13});
+}
+
+// A packet's trip: a dot runs along its path and each stop flashes.
+let pulsing = 0;
+// Timers, not animation frames: frames stop while the tab is hidden, which would strand a pulse.
+function animate(tick) {
+  const t0 = performance.now(), id = setInterval(() => { if (tick(performance.now() - t0) === false) clearInterval(id); }, 16);
+}
+function flash(at) {
+  const c = L.circleMarker(at, {radius: 6, color: accent, weight: 2, fill: false, interactive: false}).addTo(fx);
+  animate(ms => {
+    const k = ms / 550;
+    if (k >= 1) { fx.removeLayer(c); return false; }
+    c.setRadius(6 + 16 * k);
+    c.setStyle({opacity: 1 - k});
+  });
+}
+function pulse(pts) {
+  if (pulsing >= 6) return;  // a busy mesh shouldn't turn the map into noise
+  pulsing++;
+  const line = L.polyline(pts, {color: accent, weight: 2, opacity: .5, interactive: false}).addTo(fx);
+  const dot = L.circleMarker(pts[0], {radius: 5, color: "#fff", weight: 2, fillColor: accent, fillOpacity: 1, interactive: false}).addTo(fx);
+  flash(pts[0]);
+  const SEG = 420;
+  let seen = 0;
+  animate(ms => {
+    const f = ms / SEG, i = Math.floor(f);
+    if (i >= pts.length - 1) {
+      fx.removeLayer(line); fx.removeLayer(dot); flash(pts[pts.length - 1]); pulsing--;
+      return false;
+    }
+    if (i > seen) { seen = i; flash(pts[i]); }
+    const k = f - i;
+    dot.setLatLng([pts[i][0] + (pts[i + 1][0] - pts[i][0]) * k, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * k]);
+  });
 }
 
 map.on("click", () => { route.clearLayers(); closePanel(); });

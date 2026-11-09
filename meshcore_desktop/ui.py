@@ -12,16 +12,18 @@ import secrets
 import time
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QFont, QKeySequence, QLinearGradient, QPainter, QPalette, QTextDocument, QTextOption, QFontMetrics
+from PySide6.QtGui import QAction, QColor, QFont, QKeySequence, QLinearGradient, QPainter, QPalette, QPen, QTextDocument, QTextOption, QFontMetrics
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QDialog, QDialogButtonBox, QFormLayout, QFrame,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListView, QListWidget, QListWidgetItem,
-                               QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QStyle, QStyledItemDelegate,
+                               QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QStackedWidget, QStyle, QStyledItemDelegate,
                                QTabWidget, QTextBrowser, QToolButton, QTreeWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
 from . import protocol as P
 from . import theme
 from .admin import RepeaterPanel
+from .dashboard import Dashboard, NetworkGraph
+from .widgets import Radar, Toast, Welcome, battery_pixmap, fade_in, signal_html, signal_icon
 from .desktop import notify, settings, short_date
 from .pairing import PairingError
 from .link import BleTransport, BondError, Session, scan
@@ -120,12 +122,36 @@ class MessageList(QAbstractListModel):
 
 class Bubble(QStyledItemDelegate):
     PAD, GAP, RADIUS = 11, 4, 13
+    SLIDE_S, BUMP_S = .24, .6
 
     def __init__(self, win: "MainWindow", view: QListView):
         super().__init__(view)
         self.win = win
         self.view = view
         self.cache: dict = {}
+        self.appearing: dict[int, float] = {}  # id(message) -> when it started
+        self.bumps: dict[int, float] = {}
+        self.seen_repeats: dict[int, int] = {}
+        self.ticker = QTimer(self, interval=16, timeout=self._tick)
+
+    def appear(self, m: Message):
+        self.appearing[id(m)] = time.monotonic()
+        self.ticker.start()
+
+    def changed(self, m: Message):
+        """A new repeat makes the bubble ring briefly."""
+        if m.repeats > self.seen_repeats.get(id(m), 0):
+            self.bumps[id(m)] = time.monotonic()
+            self.ticker.start()
+        self.seen_repeats[id(m)] = m.repeats
+
+    def _tick(self):
+        now = time.monotonic()
+        self.appearing = {k: t for k, t in self.appearing.items() if now - t < self.SLIDE_S}
+        self.bumps = {k: t for k, t in self.bumps.items() if now - t < self.BUMP_S}
+        if not self.appearing and not self.bumps:
+            self.ticker.stop()
+        self.view.viewport().update()
 
     def _dark(self):
         return self.view.palette().color(QPalette.Base).lightness() < 128
@@ -153,7 +179,7 @@ class Bubble(QStyledItemDelegate):
         if not m.outgoing:
             foot.append("direct" if m.hops < 0 else ("0 hops" if m.hops == 0 else f"{m.hops} hop{'s' * (m.hops != 1)}"))
             if m.snr is not None:
-                foot.append(f"SNR {m.snr:.1f}")
+                foot.append(signal_html(m.snr))
         if m.repeats:
             foot.append(f"↻ {m.repeats} repeat{'s' * (m.repeats != 1)}")
         st = {SENDING: "… sending", SENT: "✓ sent", WAITING: "⏳ waiting for ack",
@@ -206,10 +232,14 @@ class Bubble(QStyledItemDelegate):
         r = option.rect
         x = r.right() - w - 16 if m.outgoing else r.left() + 16 + (self.AVATAR + 8 if self._has_avatar(m) else 0)
         rect = QRectF(x, r.top() + self.GAP, w, h)
+        now = time.monotonic()
+        k = 1 - (1 - min(1.0, (now - self.appearing[id(m)]) / self.SLIDE_S)) ** 3 if id(m) in self.appearing else 1.0
+        rect.translate(0, (1 - k) * 14)
         t = theme.current
         bg = QColor(t.accent_soft if m.outgoing else t.surface)
         me = self.win.model.self_info.name if self.win.model.self_info else None
         p.save()
+        p.setOpacity(k)
         p.setRenderHint(QPainter.Antialiasing)
         if self._has_avatar(m):
             theme.draw_avatar(p, QRectF(r.left() + 16, rect.top(), self.AVATAR, self.AVATAR), m.sender)
@@ -233,6 +263,14 @@ class Bubble(QStyledItemDelegate):
         else:
             p.setBrush(bg)
         p.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
+        if id(m) in self.bumps:
+            f = min(1.0, (now - self.bumps[id(m)]) / self.BUMP_S)
+            ring = QColor(t.accent)
+            ring.setAlphaF(1 - f)
+            p.setPen(QPen(ring, 2))
+            p.setBrush(Qt.NoBrush)
+            grow = 1 + f * 5
+            p.drawRoundedRect(rect.adjusted(-grow, -grow, grow, grow), self.RADIUS + grow, self.RADIUS + grow)
         p.translate(rect.left() + self.PAD, rect.top() + self.PAD)
         doc.drawContents(p)
         p.restore()
@@ -299,9 +337,11 @@ class ConnectDialog(QDialog):
     def __init__(self, parent, last: str):
         super().__init__(parent)
         self.setWindowTitle("Connect to a MeshCore node")
-        self.resize(420, 320)
+        self.resize(440, 450)
         self.choice = None
         lay = QVBoxLayout(self)
+        self.radar = Radar()
+        lay.addWidget(self.radar)
         lay.addWidget(QLabel("Nodes in range running MeshCore companion firmware.\n"
                              "The first time, you're asked for the PIN shown on the node's screen."))
         self.list = QListWidget()
@@ -334,10 +374,12 @@ class ConnectDialog(QDialog):
     async def do_scan(self):
         self.scan_btn.setEnabled(False)
         self.status.setText("Scanning…")
+        self.radar.running = True
         try:
             found = await scan()
         except Exception as e:
             self.status.setText(f"Scan failed: {e}")
+            self.radar.running = False
             self.scan_btn.setEnabled(True)
             return
         have = {self.list.item(i).data(Qt.UserRole) for i in range(self.list.count())}
@@ -348,6 +390,8 @@ class ConnectDialog(QDialog):
                         self.list.item(i).setText(f"{name}  ({addr}, {rssi} dBm)")
             else:
                 self._add(addr, f"{name}  ({addr}, {rssi} dBm)")
+        self.radar.running = False
+        self.radar.set_found(len(found))
         self.status.setText(f"{len(found)} found" if found else "None found. Is a phone connected to it?")
         self.scan_btn.setEnabled(True)
 
@@ -443,6 +487,8 @@ class MainWindow(QMainWindow):
         self.resize(1250, 780)
         self._build()
         model.listeners.append(self._on_model)
+        self.toaster = Toast(self)
+        theme.on_change.append(self._retheme)
         self._refresh_timer = QTimer(self, singleShot=True, interval=250, timeout=self._refresh_lists)
         self._age_timer = QTimer(self, interval=30000, timeout=self._refresh_contacts)
         self._age_timer.start()
@@ -456,7 +502,7 @@ class MainWindow(QMainWindow):
         tb = self.addToolBar("Main")
         tb.setMovable(False)
         tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        mark = QLabel()
+        mark = self.mark = QLabel()
         mark.setPixmap(theme.logo())
         mark.setContentsMargins(2, 0, 6, 0)
         tb.addWidget(mark)
@@ -483,19 +529,33 @@ class MainWindow(QMainWindow):
         self.advert_btn = adv
         tb.addWidget(adv)
         tb.addSeparator()
+        self.batt_icon = QLabel()
+        tb.addWidget(self.batt_icon)
         self.node_label = QLabel("", objectName="dim")
         tb.addWidget(self.node_label)
         spacer = QWidget()
         spacer.setSizePolicy(spacer.sizePolicy().horizontalPolicy().Expanding,
                              spacer.sizePolicy().verticalPolicy().Preferred)
         tb.addWidget(spacer)
+        accent = QToolButton(text="Accent ▾")
+        accent.setPopupMode(QToolButton.InstantPopup)
+        am = QMenu(accent)
+        for name in theme.ACCENTS:
+            am.addAction(name, lambda n=name: self.set_accent(n))
+        accent.setMenu(am)
+        tb.addWidget(accent)
         self.state_label = QLabel("", objectName="pill")
         self.state_label.setFixedHeight(26)
         tb.addWidget(self.state_label)
 
         split = QSplitter()
         split.setHandleWidth(1)
-        self.setCentralWidget(split)
+        self.split = split
+        self.stack = QStackedWidget()
+        self.welcome = Welcome(self.choose_device, lambda: self.connect_to(SIM))
+        self.stack.addWidget(self.welcome)
+        self.stack.addWidget(split)
+        self.setCentralWidget(self.stack)
 
         # Left: chats and contacts.
         self.tabs = QTabWidget(objectName="sidebar")
@@ -566,7 +626,8 @@ class MainWindow(QMainWindow):
         self.list_model = MessageList(self.model)
         self.view = QListView(objectName="conversation")
         self.view.setModel(self.list_model)
-        self.view.setItemDelegate(Bubble(self, self.view))
+        self.bubble = Bubble(self, self.view)
+        self.view.setItemDelegate(self.bubble)
         self.view.setResizeMode(QListView.Adjust)
         self.view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.view.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -611,6 +672,10 @@ class MainWindow(QMainWindow):
         self.center.addTab(self.map, "Map")
         self.admin = RepeaterPanel(self)
         self.center.addTab(self.admin, "Repeater")
+        self.dashboard = Dashboard(self.model)
+        self.center.addTab(self.dashboard, "Dashboard")
+        self.graph = NetworkGraph(self.model)
+        self.center.addTab(self.graph, "Network")
         self.center.currentChanged.connect(self._center_tab)
         split.addWidget(self.center)
 
@@ -639,11 +704,25 @@ class MainWindow(QMainWindow):
                 r = await coro
                 if done_msg:
                     ok = r is not None and getattr(r, "kind", "") != "err"
-                    self.statusBar().showMessage(done_msg if ok else f"{done_msg}: failed", 5000)
+                    self.toast(done_msg if ok else f"{done_msg}: failed", not ok)
             except Exception as e:
                 log.exception("command")
-                self.statusBar().showMessage(f"Error: {e}", 8000)
+                self.toast(f"Error: {e}", True)
         return asyncio.ensure_future(go())
+
+    def toast(self, text: str, bad: bool = False):
+        self.toaster.show_text(text, bad)
+
+    def set_accent(self, name: str):
+        self.settings.setValue("accent", name)
+        theme.apply(QApplication.instance(), theme.current.dark, name)
+
+    def _retheme(self):
+        self.mark.setPixmap(theme.logo())
+        self.welcome.retheme()
+        self._node_label()
+        self.map.refresh()
+        self.view.viewport().update()
 
     def choose_device(self):
         d = ConnectDialog(self, self.address)
@@ -742,6 +821,8 @@ class MainWindow(QMainWindow):
 
     def set_state(self, state: str, detail: str):
         self.state = state
+        if state != "disconnected":
+            self.stack.setCurrentWidget(self.split)
         text = {"connecting": "Connecting…", "syncing": f"Syncing {detail}…", "ready": "Connected",
                 "disconnected": "Disconnected" + (f": {detail}" if detail else "")}[state]
         self.state_label.setText("● " + text)
@@ -767,12 +848,15 @@ class MainWindow(QMainWindow):
     def _on_model(self, ev: str, obj):
         if ev == "message_added":
             self.list_model.added(obj)
+            if obj.live:
+                self.bubble.appear(obj)
             if obj.conv == self.conv and self.isActiveWindow():
                 self.model.mark_read(self.conv)
             elif not obj.outgoing and obj.live:
                 self._notify(obj)
             self._refresh_timer.start()
         elif ev == "message_changed":
+            self.bubble.changed(obj)
             self.list_model.changed(obj)
             cur = self.view.currentIndex().data(Qt.UserRole)
             if cur is obj:
@@ -790,6 +874,13 @@ class MainWindow(QMainWindow):
             if self.state == "ready":
                 self._contacts_timer()
                 self.map.schedule()
+        elif ev == "packet":
+            self.dashboard.add_packet(obj)
+            if self.center.currentWidget() is self.map:
+                self.map.pulse(obj)
+        elif ev == "new_contact":
+            if self.state == "ready":
+                self.toast(f"New node heard: {obj.name or obj.key[:3].hex()}")
         elif ev == "cli_late":
             self.admin.late_reply(obj)
         elif ev == "node":
@@ -817,7 +908,9 @@ class MainWindow(QMainWindow):
             self.node_label.setText("")
             return
         bits = [f"<b style='color:{theme.current.text}'>{html.escape(s.name)}</b>", f"{s.freq:.3f} MHz SF{s.sf} BW{s.bw:g}"]
+        self.batt_icon.clear()
         if self.model.battery_mv:
+            self.batt_icon.setPixmap(battery_pixmap(P.batt_percent(self.model.battery_mv)))
             bits.append(f"{P.batt_percent(self.model.battery_mv)}% · {self.model.battery_mv / 1000:.2f} V")
         di = self.model.device_info
         if di and di.fw:
@@ -880,6 +973,9 @@ class MainWindow(QMainWindow):
             it = SortItem([c.name or c.key[:3].hex(), TYPE_NAMES.get(c.type, "?"),
                            "flood" if c.hops < 0 else str(c.hops), ago(age), f"{km:.1f}" if km is not None else ""])
             it.setData(0, Qt.UserRole, dm_conv(c.prefix))
+            if c.prefix in self.model.last_snr:
+                it.setIcon(0, signal_icon(self.model.last_snr[c.prefix]))
+                it.setToolTip(1, f"Last SNR {self.model.last_snr[c.prefix]:.1f} dB")
             it.setData(0, Qt.UserRole + 1, c)
             it.sort_keys = {2: c.hops if c.hops >= 0 else 99, 3: age if age is not None else 1e12,
                             4: km if km is not None else 1e9}
@@ -940,6 +1036,8 @@ class MainWindow(QMainWindow):
 
     def _center_tab(self, i: int):
         self.details.setVisible(i == 0)
+        if self.center.widget(i) is not self.map:
+            fade_in(self.center.widget(i))
         if i == 1:
             self.map.refresh()
 

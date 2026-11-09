@@ -10,7 +10,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
 
 from . import theme
-from .desktop import app_icon
+from .desktop import app_icon, settings
 from .model import DATA_DIR, Model
 from .ui import SIM, MainWindow
 
@@ -53,7 +53,7 @@ def main():
     app.setApplicationName("MeshCore Desktop")
     app.setDesktopFileName("meshcore-desktop")
     app.setWindowIcon(app_icon())
-    theme.follow_system(app)
+    theme.follow_system(app, settings().value("accent", "Teal"))
     app.setQuitOnLastWindowClosed(False)  # the window's closeEvent disconnects, then quits
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)

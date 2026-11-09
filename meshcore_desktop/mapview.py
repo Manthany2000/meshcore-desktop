@@ -26,6 +26,7 @@ from .model import CLOCK_SANE, Model, dm_conv
 WEB = Path(__file__).parent / "web"
 AGES = [("Any time", None), ("Last 24 h", 86400), ("Last 7 days", 7 * 86400), ("Last 30 days", 30 * 86400)]
 STALE_S = 3 * 86400  # drawn faded
+FRESH_S = 3600  # drawn glowing
 
 
 def _ago(sec):
@@ -81,6 +82,7 @@ def contact_details(model: Model, c: P.Contact, relays: Counter, stats: dict[str
                               ("Public key", c.key.hex()), ("Hop hash", c.key[:1].hex())]),
         _section("Reach", [("Route", route), ("Last heard", heard), ("Last advert", _stamp(c.last_advert)),
                            ("Contact updated", _stamp(c.last_mod)),
+                           ("Last SNR", f"{model.last_snr[c.prefix]:.1f} dB" if c.prefix in model.last_snr else None),
                            ("Distance", f"{km:.1f} km" if km is not None else None),
                            ("Bearing", _bearing(s.lat, s.lon, c.lat, c.lon) if km is not None else None)]),
         _section("Location", [("Latitude", f"{c.lat:.6f}"), ("Longitude", f"{c.lon:.6f}")]),
@@ -299,7 +301,7 @@ class MapView(QWidget):
                 route.append({"lat": hc.lat, "lon": hc.lon} if hc and self._located(hc) else None)
             sub = TYPE_NAMES.get(c.type, "Node") + " · " + ("heard " + _ago(age) if age is not None else "not heard yet")
             nodes.append({"key": c.prefix.hex(), "name": c.name or c.key[:3].hex(), "type": c.type,
-                          "lat": c.lat, "lon": c.lon, "sub": sub, "stale": age is None or age > STALE_S, "route": route,
+                          "lat": c.lat, "lon": c.lon, "sub": sub, "stale": age is None or age > STALE_S, "fresh": age is not None and age < FRESH_S, "route": route,
                           "sections": contact_details(self.model, c, relays, self.stats(c.prefix)),
                           "actions": contact_actions(c)})
         self.shown = [n["key"] for n in nodes]
@@ -335,6 +337,21 @@ class MapView(QWidget):
             self.focus((exact or self.shown)[0])
         else:
             self.view.page().runJavaScript("fit()")
+
+    def pulse(self, p: P.RawPacket):
+        """Runs a flood's path across the map as the packet is heard. Hops are
+        short hashes, so this picks the likeliest located node for each."""
+        s = self.model.self_info
+        if not self.ready or not p.flood or p.hops < 1 or not s or not (s.lat or s.lon):
+            return
+        pts = []
+        for h in p.path.hops():
+            cs = [c for c in self.model.contacts.values() if c.key.startswith(h) and self._located(c)]
+            cs.sort(key=lambda c: c.type != P.ADV_REPEATER)
+            if cs:
+                pts.append([cs[0].lat, cs[0].lon])
+        if pts:
+            self.view.page().runJavaScript(f"pulse({json.dumps(pts + [[s.lat, s.lon]])})")
 
     def focus(self, prefix_hex: str):
         if not self.ready:

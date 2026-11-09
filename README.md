@@ -6,6 +6,14 @@ Built with PySide6 and bleak; protocol and repeat matching ported from the CYD M
 > **Early version.** Most features, including repeater management, have only been tested against the built-in
 > simulator so far (`--sim`), not on real radios. Windows builds are untested on real Windows.
 
+![MeshCore Desktop messages](docs/messages.png)
+
+| Map with node details | Repeater management |
+|---|---|
+| ![Map](docs/map.png) | ![Repeater](docs/repeater.png) |
+| **Dashboard** | **Network graph** |
+| ![Dashboard](docs/dashboard.png) | ![Network](docs/network.png) |
+
 - Channels and direct messages, with unread counts and desktop notifications for DMs and @mentions
 - Replies (`@[Name]`, double-click or Ctrl+R a message), mentions highlighted
 - Repeats: how many relayed copies your node heard of each message (yours too), which
@@ -13,6 +21,10 @@ Built with PySide6 and bleak; protocol and repeat matching ported from the CYD M
 - Delivery status on DMs (✓✓ delivered with round-trip time, ✗ no ack, right-click → send again)
 - Contacts: type, hops, last heard, distance; reset route; message from the list
 - Add `#hashtag` or private channels, remove channels
+- Map with type icons, clustering, live packet paths, and full details on hover or click
+- Dashboard with activity and a live packet feed, plus a graph of who relays through whom
+- Repeater battery and noise history, kept each time you refresh a repeater
+- Light and dark themes that follow your system, with a choice of accent colours
 - Sends zero-hop or flood adverts; sets the node's clock from the PC if it's behind
 - Messages saved per node (~/.local/share/meshcore-desktop on Linux, %LOCALAPPDATA%\MeshCore Desktop on
   Windows, or a `data` folder beside the packaged app); reconnects when the link drops
@@ -116,4 +128,4 @@ GitHub build the Linux and Windows downloads and post them under Releases.
 
 ## Licence
 
-MIT, see `LICENSE`. The bundled Leaflet map library is BSD-2-Clause, see `meshcore_desktop/web/LEAFLET-LICENSE.txt`.
+MIT, see `LICENSE`. The bundled Leaflet map library is BSD-2-Clause and Leaflet.markercluster is MIT, see `LEAFLET-LICENSE.txt` and `MARKERCLUSTER-LICENSE.txt` in `meshcore_desktop/web/`.

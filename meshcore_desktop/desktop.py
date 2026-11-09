@@ -46,7 +46,7 @@ def settings() -> QSettings:
 
 
 def app_icon() -> QIcon:
-    return QIcon.fromTheme("network-wireless", QIcon(str(HERE / "icons/app.png")))
+    return QIcon(str(HERE / "icons/app.png"))
 
 
 _STD = {"network-connect": QStyle.SP_MediaPlay, "network-disconnect": QStyle.SP_MediaStop,
