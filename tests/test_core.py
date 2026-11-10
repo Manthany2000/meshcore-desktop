@@ -118,3 +118,39 @@ def test_session_against_sim(tmp_path):
         assert out.repeats >= 1 and out.repeaters
         await s.stop()
     asyncio.run(go())
+
+
+def test_always_flood_resets_path_before_each_dm(tmp_path):
+    async def go():
+        model = Model(tmp_path)
+        t = S.SimTransport()
+        s = Session(model, t)
+        await s.start()
+        alice = model.contacts[S._key("alice")[:6]]
+        bob = model.contacts[S._key("bob-t1000")[:6]]
+        model.set_always_flood(alice.prefix, True)
+        sent = []
+        write = t.write
+
+        async def spy(b):
+            if b[0] == P.CMD_RESET_PATH:
+                sent.append(("reset", b[1:7]))
+            elif b[0] == P.CMD_SEND_TXT_MSG:
+                sent.append(("dm", b[7:13]))
+            await write(b)
+        t.write = spy
+        for text in ("one", "two"):  # the first flood teaches a route; the second must still flood
+            await s.send(dm_conv(alice.prefix), text)
+        await s.send(dm_conv(bob.prefix), "routed")
+        assert sent == [("reset", alice.prefix), ("dm", alice.prefix),
+                        ("reset", alice.prefix), ("dm", alice.prefix), ("dm", bob.prefix)]
+        await s.stop()
+        # Kept per node across restarts, and can be turned off.
+        again = Model(tmp_path)
+        again.open_for_node(model.self_info.key)
+        assert again.always_floods(alice.prefix) and not again.always_floods(bob.prefix)
+        again.set_always_flood(alice.prefix, False)
+        third = Model(tmp_path)
+        third.open_for_node(model.self_info.key)
+        assert not third.always_floods(alice.prefix)
+    asyncio.run(go())

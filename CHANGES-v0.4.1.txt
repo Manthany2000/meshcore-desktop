@@ -1,0 +1,5 @@
+MeshCore Desktop v0.4.1
+
+NEW
+
+Always flood messages: A contact's menu (right-click them in Contacts, or click their name at the top of a DM) has a new "Always flood messages" checkbox, under Reset path. With it on, the stored path to that contact is forgotten right before every message and every resend, so each one floods the whole mesh instead of only the first. Their reply still teaches the node a route, but it isn't used for them. While it's on, the Flood button in the DM header reads "Always flooding" and is greyed out, and so is Reset path. The setting is kept per node, so it stays on after a restart and doesn't carry over to a different companion node. Flooding uses more airtime than a direct route, so it's best kept for contacts a stored path keeps failing to reach.

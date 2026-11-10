@@ -227,6 +227,10 @@ class Session:
             frame = P.send_channel(m.channel, m.wire_time, m.text)
             f = await self.request(frame, {"ok"})
         else:
+            c = self.model.contacts.get(m.dm_prefix)
+            if c and self.model.always_floods(c.prefix):
+                # The last reply will have taught the node a route; forget it so this one floods too.
+                await self.reset_path(c.key)
             frame = P.send_direct(m.dm_prefix, m.wire_time, m.text)
             f = await self.request(frame, {"sent"})
         self.model.send_result(m, f)

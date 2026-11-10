@@ -106,6 +106,7 @@ class Model:
         self.first_sync = True
         self.found_away: list[P.Contact] = []  # in the node's contact list but new to us
         self.last_snr: dict[bytes, float] = {}  # prefix -> SNR of its latest message
+        self.flood_always: set[bytes] = set()  # contact prefixes whose DMs always flood
 
     # --- plumbing -----------------------------------------------------------
 
@@ -128,6 +129,7 @@ class Model:
             CREATE TABLE IF NOT EXISTS channels (idx INTEGER PRIMARY KEY, name TEXT);
             CREATE TABLE IF NOT EXISTS contacts (key TEXT PRIMARY KEY, name TEXT, type INT);
             CREATE TABLE IF NOT EXISTS reads (conv TEXT PRIMARY KEY, at REAL);
+            CREATE TABLE IF NOT EXISTS flood_always (prefix TEXT PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS repeater_stats (prefix TEXT, at REAL, batt_mv INT, noise_floor INT, last_rssi INT);
             CREATE INDEX IF NOT EXISTS repeater_stats_key ON repeater_stats(prefix, at);
         """)
@@ -151,6 +153,7 @@ class Model:
         self.first_sync = not self.saved_names  # everything looks new the first time: that isn't news
         self.found_away = []
         self.last_read = dict(self.db.execute("SELECT conv, at FROM reads"))
+        self.flood_always = {bytes.fromhex(k) for k, in self.db.execute("SELECT prefix FROM flood_always")}
         self.emit("reload")
 
     def take_found_away(self) -> list:
@@ -208,6 +211,21 @@ class Model:
             self.db.execute("INSERT OR REPLACE INTO reads VALUES (?, ?)", (conv, self.last_read[conv]))
             self.db.commit()
         self.emit("unread", conv)
+
+    def always_floods(self, prefix: bytes) -> bool:
+        return prefix[:P.KEY_PREFIX] in self.flood_always
+
+    def set_always_flood(self, prefix: bytes, on: bool):
+        """Marks a contact so every DM to them floods instead of using a stored path."""
+        prefix = prefix[:P.KEY_PREFIX]
+        (self.flood_always.add if on else self.flood_always.discard)(prefix)
+        if self.db:
+            if on:
+                self.db.execute("INSERT OR IGNORE INTO flood_always VALUES (?)", (prefix.hex(),))
+            else:
+                self.db.execute("DELETE FROM flood_always WHERE prefix = ?", (prefix.hex(),))
+            self.db.commit()
+        self.emit("flood_always", prefix)
 
     def dm_convs(self) -> list[str]:
         """DM conversations, most recent first."""

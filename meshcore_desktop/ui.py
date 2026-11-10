@@ -1001,6 +1001,9 @@ class MainWindow(QMainWindow):
                 self._maps_changed()
                 if self.conv == dm_conv(obj.prefix):
                     self._update_title()
+        elif ev == "flood_always":
+            if self.conv == dm_conv(obj):
+                self._update_title()
         elif ev == "packet":
             self.dashboard.add_packet(obj)
             self.admin.live.add_packet(obj)
@@ -1176,11 +1179,20 @@ class MainWindow(QMainWindow):
         if c.lat or c.lon:
             m.addAction("Show on map", lambda: self.show_on_map(c))
         reset = m.addAction("Reset path (flood the next message)", lambda: self.reset_path(c))
-        reset.setEnabled(c.hops >= 0 and self.state == "ready")
+        always = self.model.always_floods(c.prefix)
+        reset.setEnabled(c.hops >= 0 and self.state == "ready" and not always)
+        flood = m.addAction("Always flood messages")
+        flood.setCheckable(True)
+        flood.setChecked(always)
+        flood.toggled.connect(lambda on: self.set_always_flood(c, on))
         m.addAction("Copy public key", lambda: QApplication.clipboard().setText(c.key.hex()))
 
     def reset_path(self, c: P.Contact):
         self.run(self.session.reset_path(c.key), f"Path reset for {c.name}: the next message floods")
+
+    def set_always_flood(self, c: P.Contact, on: bool):
+        self.model.set_always_flood(c.prefix, on)
+        self.toast(f"{c.name}: every message floods" if on else f"{c.name}: messages use the stored path again")
 
     def _conv_contact(self) -> P.Contact | None:
         if not self.conv or not self.conv.startswith("dm:"):
@@ -1274,16 +1286,22 @@ class MainWindow(QMainWindow):
         c = self._conv_contact()
         self.title.setMenu(self.title_menu if c else None)
         self.title.setCursor(Qt.PointingHandCursor if c else Qt.ArrowCursor)
-        self.title.setToolTip(f"Options for {c.name}: reset path, map, public key" if c else "")
+        self.title.setToolTip(f"Options for {c.name}: reset path, always flood, map, public key" if c else "")
         self.flood_btn.setVisible(c is not None)
         if c:
             routed = c.hops >= 0
-            self.flood_btn.setEnabled(routed and self.state == "ready")
-            self.flood_btn.setText("Flood" if routed else "Flooding")
-            self.flood_btn.setToolTip(
-                f"Forget the stored path to {c.name}, so the next message floods the whole mesh "
-                "and their reply sets a fresh path" if routed else
-                "No stored path: messages already flood until one is learned")
+            if self.model.always_floods(c.prefix):
+                self.flood_btn.setEnabled(False)
+                self.flood_btn.setText("Always flooding")
+                self.flood_btn.setToolTip(f"Every message to {c.name} floods the whole mesh. "
+                                          "Turn it off from the name menu.")
+            else:
+                self.flood_btn.setEnabled(routed and self.state == "ready")
+                self.flood_btn.setText("Flood" if routed else "Flooding")
+                self.flood_btn.setToolTip(
+                    f"Forget the stored path to {c.name}, so the next message floods the whole mesh "
+                    "and their reply sets a fresh path" if routed else
+                    "No stored path: messages already flood until one is learned")
         if not self.conv:
             self.title.setText("")
             self.subtitle.setText("Connect to a node to start.")
