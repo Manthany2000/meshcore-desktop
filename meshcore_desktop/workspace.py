@@ -5,7 +5,7 @@ the two. A panel too small for its contents scrolls, so a crowded layout can't
 force the window wider than the screen."""
 from __future__ import annotations
 
-from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QScrollArea, QSplitter, QSplitterHandle, QToolButton,
                                QVBoxLayout, QWidget)
@@ -123,12 +123,32 @@ class Pane(QFrame):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(widget)
         v.addWidget(scroll, 1)
+        # A view with fill_height takes the tile's height too, and only scrolls below
+        # its own minimum. Qt would otherwise size word-wrapped content to its preferred height.
+        self.fill = getattr(widget, "fill_height", False)
+        if self.fill:
+            scroll.setWidgetResizable(False)
+            scroll.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, e):
+        if e.type() == QEvent.Resize and obj is self.scroll.viewport():
+            self._fill()
+        return False
+
+    def _fill(self):
+        vp = self.scroll.viewport()
+        fit = getattr(self.widget, "fit_width", None)
+        if fit:
+            fit(vp.width())
+        self.widget.resize(vp.width(), max(vp.height(), self.widget.minimumSizeHint().height()))
 
     def minimumSizeHint(self):
         return MIN_PANE
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
+        if self.fill:
+            return  # the viewport's resize does it
         fit = getattr(self.widget, "fit_width", None)
         if fit:
             fit(self.scroll.viewport().width())

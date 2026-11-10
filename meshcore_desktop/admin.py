@@ -9,9 +9,9 @@ import time
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QColor, QFontDatabase
-from PySide6.QtWidgets import (QBoxLayout, QComboBox, QGraphicsDropShadowEffect, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
-                               QPlainTextEdit, QPushButton, QTabWidget, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtGui import QFontDatabase
+from PySide6.QtWidgets import (QBoxLayout, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
+                               QPlainTextEdit, QPushButton, QScrollArea, QTabWidget, QToolButton, QVBoxLayout, QWidget)
 
 from . import protocol as P
 from . import theme
@@ -143,6 +143,8 @@ class HistoryLine(QLineEdit):
 
 
 class RepeaterPanel(QWidget):
+    fill_height = True  # sized to its tile; its tab pages scroll inside instead
+
     def __init__(self, win):
         super().__init__()
         self.win = win
@@ -181,17 +183,20 @@ class RepeaterPanel(QWidget):
         self.route_btn.clicked.connect(self.reset_route)
         self.state = QLabel("")
         self.state.setWordWrap(True)
-        self.advert_near = QPushButton("Zero-hop advert")
-        self.advert_near.setToolTip("The repeater announces itself to nodes that can hear it directly")
-        self.advert_near.clicked.connect(lambda: self.send_advert(False))
-        self.advert_flood = QPushButton("Flood advert")
-        self.advert_flood.setToolTip("The repeater announces itself across the whole mesh. Uses more airtime.")
-        self.advert_flood.clicked.connect(lambda: self.send_advert(True))
+        # One button for both adverts, so the login row fits a narrow tile.
+        self.advert_btn = QToolButton(text="Advert ▾", objectName="plain")
+        self.advert_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.advert_btn.setPopupMode(QToolButton.InstantPopup)
+        self.advert_btn.setToolTip("Make the repeater announce itself")
+        am = QMenu(self.advert_btn)
+        am.addAction("Zero-hop (nodes that hear it directly)", lambda: self.send_advert(False))
+        am.addAction("Flood (whole mesh, uses more airtime)", lambda: self.send_advert(True))
+        self.advert_btn.setMenu(am)
         self.top = QGridLayout()  # placed by fit_width: wide, the buttons sit beside the field
         self.top.setColumnStretch(0, 1)
         v.addLayout(self.top)
 
-        box = QGroupBox("Status")
+        box = QWidget()
         grid = self.status_grid = QGridLayout(box)
         self.values: dict[str, QLabel] = {}
         self.status_pairs = []
@@ -204,9 +209,10 @@ class RepeaterPanel(QWidget):
         self.status_btn = QPushButton("Refresh")
         self.status_btn.clicked.connect(self.refresh)
         self.gauge = BatteryGauge()
-        box.setGraphicsEffect(QGraphicsDropShadowEffect(blurRadius=18, xOffset=0, yOffset=2, color=QColor(0, 0, 0, 45)))
-        v.addWidget(box)
-        self.status_box = box
+        status_page = QWidget()
+        sv = QVBoxLayout(status_page)
+        sv.addWidget(box)
+        sv.addStretch(1)
         self.narrow = None
 
         self.console =QPlainTextEdit(readOnly=True)
@@ -236,15 +242,24 @@ class RepeaterPanel(QWidget):
         row.addWidget(self.send_btn)
         cv.addLayout(row)
 
+        # Everything below the login row is a tab, so the panel fits its tile: pages
+        # taller than the room they get scroll inside the tab, not the whole panel.
         self.inner = QTabWidget()
+        self.inner.setMinimumHeight(90)
+        self.inner.addTab(self._scrolling(status_page), "Status")
         self.inner.addTab(console_page, "Console")
-        self.inner.addTab(self._settings_page(), "Settings")
+        self.inner.addTab(self._scrolling(self._settings_page()), "Settings")
         self.inner.addTab(self._history_page(), "History")
         self.live = LivePage(self)
         self.inner.addTab(self.live, "Live")
-        # The charts need the room, and Live shows the rates itself.
-        self.inner.currentChanged.connect(lambda i: self.status_box.setVisible(self.inner.widget(i) is not self.live))
         v.addWidget(self.inner, 1)
+
+    @staticmethod
+    def _scrolling(page: QWidget) -> QScrollArea:
+        s = QScrollArea(frameShape=QFrame.NoFrame, widgetResizable=True)
+        s.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        s.setWidget(page)
+        return s
 
     def _history_page(self) -> QWidget:
         page = QWidget()
@@ -296,22 +311,20 @@ class RepeaterPanel(QWidget):
         self.narrow = narrow
         cols = 1 if narrow else 2
         t = self.top
-        for x in (self.password, self.login_btn, self.route_btn, self.state, self.advert_near, self.advert_flood):
+        for x in (self.password, self.login_btn, self.route_btn, self.state, self.advert_btn):
             t.removeWidget(x)
-        if narrow:  # field, its buttons, the advert buttons, then the status text
-            t.addWidget(self.password, 0, 0, 1, 3)
+        if narrow:  # the field, then its buttons, then the status text
+            t.addWidget(self.password, 0, 0, 1, 4)
             t.addWidget(self.login_btn, 1, 1)
             t.addWidget(self.route_btn, 1, 2)
-            t.addWidget(self.advert_near, 2, 1)
-            t.addWidget(self.advert_flood, 2, 2)
-            t.addWidget(self.state, 3, 0, 1, 3)
+            t.addWidget(self.advert_btn, 1, 3)
+            t.addWidget(self.state, 2, 0, 1, 4)
         else:
             t.addWidget(self.password, 0, 0)
             t.addWidget(self.login_btn, 0, 1)
             t.addWidget(self.route_btn, 0, 2)
-            t.addWidget(self.state, 1, 0)
-            t.addWidget(self.advert_near, 1, 1)
-            t.addWidget(self.advert_flood, 1, 2)
+            t.addWidget(self.advert_btn, 0, 3)
+            t.addWidget(self.state, 1, 0, 1, 4)
         self.settings_row.setDirection(QBoxLayout.TopToBottom if narrow else QBoxLayout.LeftToRight)
         g = self.status_grid
         g.removeWidget(self.gauge)
@@ -348,8 +361,7 @@ class RepeaterPanel(QWidget):
         self.command.setEnabled(cli)
         self.send_btn.setEnabled(cli)
         self.presets.setEnabled(cli)
-        self.advert_near.setEnabled(cli)
-        self.advert_flood.setEnabled(cli)
+        self.advert_btn.setEnabled(cli)
         self.read_btn.setEnabled(cli)
         self.apply_btn.setEnabled(cli and bool(r.settings))
         self.live.set_usable(self.link_ready and r is not None and r.logged_in and r.is_admin is not False)

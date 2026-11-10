@@ -121,6 +121,16 @@ class MessageList(QAbstractListModel):
         self.set_conv(self.conv)
 
 
+class ChatView(QListView):
+    """In list mode Qt keeps each row's height when only the width changes, so
+    rewrapped bubbles would overlap. Measure the rows again on every width change."""
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if e.size().width() != e.oldSize().width():
+            self.scheduleDelayedItemsLayout()
+
+
 class Bubble(QStyledItemDelegate):
     PAD, GAP, RADIUS = 11, 4, 13
     SLIDE_S, BUMP_S = .24, .6
@@ -682,12 +692,14 @@ class MainWindow(QMainWindow):
         self.flood_btn = QPushButton("Flood")
         self.flood_btn.clicked.connect(self._flood_current)
         head.addWidget(self.flood_btn)
-        self.subtitle = QLabel("", objectName="dim")
+        self.subtitle = QLabel("", objectName="dim", wordWrap=True)
         self.subtitle.setContentsMargins(16, 0, 16, 6)
+        self.subtitle.setMinimumWidth(1)  # a long route wraps instead of widening the panel
+        self.title.setMinimumWidth(1)
         mv.addLayout(head)
         mv.addWidget(self.subtitle)
         self.list_model = MessageList(self.model)
-        self.view = QListView(objectName="conversation")
+        self.view = ChatView(objectName="conversation")
         self.view.setModel(self.list_model)
         self.bubble = Bubble(self, self.view)
         self.view.setItemDelegate(self.bubble)

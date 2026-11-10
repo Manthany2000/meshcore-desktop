@@ -26,6 +26,10 @@ Map legend: The legend is a single row, so it no longer covers half of a small m
 
 FIXED
 
+Messages word-wrap to the panel again when it's resized. Bubbles used to keep their old height after a resize and overlap, and a long route under a DM's name could hold the panel wider than its tile.
+
+The Repeater panel fits its tile: Status is now the first tab beside Console, Settings, History and Live, long pages scroll inside their tab, and the two advert buttons are one Advert ▾ menu.
+
 A DM's route now updates as soon as the node learns a new path. It used to change only when the whole contact list reloaded.
 
 "1 hops" now reads "1 hop".
