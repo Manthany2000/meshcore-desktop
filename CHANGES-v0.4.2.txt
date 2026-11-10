@@ -1,0 +1,5 @@
+MeshCore Desktop v0.4.2
+
+CHANGED
+
+Linux download uses your system's graphics drivers: The Linux build used to carry its own copy of some graphics libraries (libgbm, plus libstdc++, expat, zlib and the core X11/xcb libraries) from the older Ubuntu 22.04 system it's built on. On newer distros those clashed with the computer's own GPU drivers, and the app started with an "outdated Mesa" error and fell back to slow software drawing. The download now leaves those libraries out and uses the ones already installed, so hardware drawing works on current distros. It still runs on Ubuntu 22.04, Debian 12, Fedora 36 and newer.

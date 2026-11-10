@@ -32,7 +32,21 @@ UNUSED = ("/qml/", "\\qml\\", "Quick3D", "Multimedia", "SpatialAudio", "TextToSp
           "QtQuickControls2", "Qt6QuickControls2", "Qt6QuickDialogs", "Qt6QuickTemplates2", "Qt6Bluetooth",
           "platformthemes/libqgtk3", "printsupport/libcups")
 a.binaries = [b for b in a.binaries if not any(u in b[1] or u in b[0] for u in UNUSED)]
-a.datas = [d for d in a.datas if not any(u in d[1] or u in d[0] for u in UNUSED)]
+# The graphics stack must come from the host: a libgbm/libEGL bundled from the
+# build container's older Mesa doesn't match the host's GPU drivers, and Mesa
+# refuses them ("outdated Mesa"). The host's drivers (Mesa, VA-API) also load
+# into our process, so the libraries they share with us (libstdc++, expat, zlib,
+# core libxcb extensions...) must be the host's newer ones too, or they fail with
+# missing symbol versions like CXXABI_1.3.15. Every desktop Linux has all of these.
+if not WIN:
+    HOST_ONLY = ("libgbm.so", "libdrm.so", "libdrm_", "libGL.so", "libGLX", "libGLdispatch", "libOpenGL",
+                 "libEGL", "libglapi", "libvulkan", "libwayland-client", "libwayland-egl", "libwayland-server",
+                 "libwayland-cursor", "libxshmfence", "libva", "libLLVM", "libelf",
+                 "libstdc++.so", "libgcc_s.so", "libexpat.so", "libz.so", "libzstd.so",
+                 "libX11.so", "libX11-xcb.so", "libXau.so", "libXdmcp.so", "libXext.so", "libXfixes.so",
+                 "libxcb.so", "libxcb-glx", "libxcb-dri", "libxcb-present", "libxcb-randr", "libxcb-render.so",
+                 "libxcb-shm", "libxcb-sync", "libxcb-xfixes", "libxcb-xkb")
+    a.binaries = [b for b in a.binaries if not Path(b[0]).name.startswith(HOST_ONLY)]
 
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="meshcore-desktop", console=False,
