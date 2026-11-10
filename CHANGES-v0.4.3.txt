@@ -1,0 +1,11 @@
+MeshCore Desktop v0.4.3
+
+CHANGED
+
+New look: The app has a plainer, hand-built style that suits a radio tool. One flat signal-green accent replaces the teal gradients, and the glows, drop shadows and round pill buttons are gone. Buttons, boxes and panels have small square corners. Tabs and the view chips in the toolbar are plain text with a line under the one that's open. The connection status is a thin outlined tag, and unread counts are small square tags.
+
+Chat list and messages: The open chat has a solid bar down its left edge. Avatars are small squares in muted colours instead of bright circles. A message that mentions you is marked with an amber bar on its left instead of a glowing outline.
+
+Radio data in monospace: Times, hops, SNR and repeats under each message, the connection status and the big Dashboard numbers use a fixed-width font, like a logbook.
+
+Accent colours: The choices in the ⋯ menu are now Signal green, Amber, Radio red and Slate blue, all flat. If you had Violet or Sunset picked, the app switches to Signal green.
