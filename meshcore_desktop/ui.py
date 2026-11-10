@@ -23,6 +23,7 @@ from . import protocol as P
 from . import theme
 from .admin import RepeaterPanel
 from .dashboard import Dashboard
+from .waterfall import Waterfall
 from .workspace import Workspace
 from .widgets import Radar, Toast, Welcome, battery_pixmap, fade_in, signal_html, signal_icon
 from .desktop import notify, settings, short_date
@@ -741,6 +742,13 @@ class MainWindow(QMainWindow):
         self.dashboard = Dashboard(self.model)
         self.center.addTab(self.dashboard, "Dashboard")
         split.addWidget(self.center)
+        # The packet waterfall sits right after the view chips (after Dashboard).
+        self.waterfall = Waterfall()
+        self.waterfall.clicked.connect(lambda: self.center.setCurrentWidget(self.dashboard))
+        bar = self.center.bar
+        at = bar.indexOf(self.center.chips[self.center.indexOf(self.dashboard)]) + 1
+        bar.insertSpacing(at, 6)
+        bar.insertWidget(at + 1, self.waterfall)
         self.views_act = tb.insertWidget(self.views_anchor, self.center.chip_bar)
         self.stack.currentChanged.connect(lambda _i: self.views_act.setVisible(self.stack.currentWidget() is self.split))
         self.views_act.setVisible(False)  # nothing to show until a node connects
@@ -939,6 +947,7 @@ class MainWindow(QMainWindow):
         self.state_label.setText("● " + text)
         theme.set_tone(self.state_label, {"ready": "ok", "disconnected": "off"}.get(state, "busy"))
         ready = state == "ready"
+        self.waterfall.set_live(ready)
         self.connect_act.setVisible(state == "disconnected")
         self.disconnect_act.setVisible(state != "disconnected")
         self.unpair_act.setEnabled(bool(self.address) and self.address != SIM)
@@ -993,6 +1002,7 @@ class MainWindow(QMainWindow):
             if self.conv == dm_conv(obj):
                 self._update_title()
         elif ev == "packet":
+            self.waterfall.add_packet(obj)
             self.dashboard.add_packet(obj)
             self.admin.live.add_packet(obj)
             if self.center.is_open(self.map_tab):
