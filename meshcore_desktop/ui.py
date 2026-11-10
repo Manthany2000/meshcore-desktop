@@ -665,15 +665,26 @@ class MainWindow(QMainWindow):
         mv = QVBoxLayout(mid)
         mv.setContentsMargins(0, 0, 0, 0)
         mv.setSpacing(0)
-        self.title = QLabel("")
+        # The name opens the contact's menu in a DM; Flood drops the stored route.
+        head = QHBoxLayout()
+        head.setContentsMargins(10, 8, 12, 0)
+        head.setSpacing(8)
+        self.title = QToolButton(objectName="convtitle")
         f = self.title.font()
         f.setPointSize(f.pointSize() + 3)
         f.setBold(True)
         self.title.setFont(f)
-        self.title.setContentsMargins(16, 10, 16, 0)
+        self.title.setPopupMode(QToolButton.InstantPopup)
+        self.title_menu = QMenu(self.title)
+        self.title_menu.aboutToShow.connect(self._fill_title_menu)
+        head.addWidget(self.title)
+        head.addStretch(1)
+        self.flood_btn = QPushButton("Flood")
+        self.flood_btn.clicked.connect(self._flood_current)
+        head.addWidget(self.flood_btn)
         self.subtitle = QLabel("", objectName="dim")
         self.subtitle.setContentsMargins(16, 0, 16, 6)
-        mv.addWidget(self.title)
+        mv.addLayout(head)
         mv.addWidget(self.subtitle)
         self.list_model = MessageList(self.model)
         self.view = QListView(objectName="conversation")
@@ -934,6 +945,7 @@ class MainWindow(QMainWindow):
         self.advert_btn.setEnabled(ready)
         self.admin.link_changed(state)
         self._count()
+        self._update_title()
         if state == "disconnected" and self.want_connected and detail:
             # Dropped or failed: keep trying while the user wants a link.
             QTimer.singleShot(10000, lambda: self.want_connected and self.state == "disconnected"
@@ -975,6 +987,8 @@ class MainWindow(QMainWindow):
             if self.state == "ready":
                 self._contacts_timer()
                 self._maps_changed()
+                if self.conv == dm_conv(obj.prefix):
+                    self._update_title()
         elif ev == "packet":
             self.dashboard.add_packet(obj)
             self.admin.live.add_packet(obj)
@@ -1139,15 +1153,38 @@ class MainWindow(QMainWindow):
             return
         c: P.Contact = it.data(0, Qt.UserRole + 1)
         m = QMenu(self)
+        self._contact_actions(m, c, message=True)
+        m.exec(self.contacts.viewport().mapToGlobal(pos))
+
+    def _contact_actions(self, m: QMenu, c: P.Contact, message: bool):
         if c.type == P.ADV_REPEATER:
             m.addAction("Manage repeater…", lambda: self.manage_repeater(c))
-        m.addAction("Message", lambda: self.open_conv(dm_conv(c.prefix)))
+        if message:
+            m.addAction("Message", lambda: self.open_conv(dm_conv(c.prefix)))
         if c.lat or c.lon:
             m.addAction("Show on map", lambda: self.show_on_map(c))
-        m.addAction("Reset route (rediscover by flood)",
-                    lambda: self.run(self.session.reset_path(c.key), f"Route reset for {c.name}"))
+        reset = m.addAction("Reset path (flood the next message)", lambda: self.reset_path(c))
+        reset.setEnabled(c.hops >= 0 and self.state == "ready")
         m.addAction("Copy public key", lambda: QApplication.clipboard().setText(c.key.hex()))
-        m.exec(self.contacts.viewport().mapToGlobal(pos))
+
+    def reset_path(self, c: P.Contact):
+        self.run(self.session.reset_path(c.key), f"Path reset for {c.name}: the next message floods")
+
+    def _conv_contact(self) -> P.Contact | None:
+        if not self.conv or not self.conv.startswith("dm:"):
+            return None
+        return self.model.contacts.get(bytes.fromhex(self.conv[3:]))
+
+    def _fill_title_menu(self):
+        self.title_menu.clear()
+        c = self._conv_contact()
+        if c:
+            self._contact_actions(self.title_menu, c, message=False)
+
+    def _flood_current(self):
+        c = self._conv_contact()
+        if c:
+            self.reset_path(c)
 
     def _chat_menu(self, pos: QPoint):
         it = self.chats.itemAt(pos)
@@ -1196,7 +1233,7 @@ class MainWindow(QMainWindow):
         if what == "manage":
             self.manage_repeater(c)
         elif what == "reset" and self.session and self.state == "ready":
-            self.run(self.session.reset_path(c.key), f"Route reset for {c.name}")
+            self.reset_path(c)
 
     def _repeater_stats(self, prefix: bytes) -> dict[str, str]:
         r = self.admin.remotes.get(prefix)
@@ -1222,11 +1259,24 @@ class MainWindow(QMainWindow):
         self.input.setFocus()
 
     def _update_title(self):
+        c = self._conv_contact()
+        self.title.setMenu(self.title_menu if c else None)
+        self.title.setCursor(Qt.PointingHandCursor if c else Qt.ArrowCursor)
+        self.title.setToolTip(f"Options for {c.name}: reset path, map, public key" if c else "")
+        self.flood_btn.setVisible(c is not None)
+        if c:
+            routed = c.hops >= 0
+            self.flood_btn.setEnabled(routed and self.state == "ready")
+            self.flood_btn.setText("Flood" if routed else "Flooding")
+            self.flood_btn.setToolTip(
+                f"Forget the stored path to {c.name}, so the next message floods the whole mesh "
+                "and their reply sets a fresh path" if routed else
+                "No stored path: messages already flood until one is learned")
         if not self.conv:
             self.title.setText("")
             self.subtitle.setText("Connect to a node to start.")
             return
-        self.title.setText(self.model.conv_title(self.conv))
+        self.title.setText(self.model.conv_title(self.conv) + (" ▾" if c else ""))
         if self.conv.startswith("ch:"):
             ch = self.model.channels.get(int(self.conv[3:]))
             self.subtitle.setText(f"Channel {self.conv[3:]}" + ("" if ch else " (not on this node)"))
@@ -1235,7 +1285,7 @@ class MainWindow(QMainWindow):
             if c:
                 route = "no known route: sends by flood" if c.hops < 0 else (
                     "direct neighbour" if c.hops == 0 else
-                    f"{c.hops} hops via " + " → ".join(self._hop(h.hex()) for h in c.path.hops()))
+                    f"{c.hops} hop{'s' * (c.hops != 1)} via " + " → ".join(self._hop(h.hex()) for h in c.path.hops()))
                 self.subtitle.setText(f"{TYPE_NAMES.get(c.type, '')} · {route} · heard {ago(self.model.contact_age(c))}"
                                       " ago")
             else:

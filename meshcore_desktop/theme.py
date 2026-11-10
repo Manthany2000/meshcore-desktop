@@ -133,6 +133,9 @@ def _sheet(c: Colors) -> str:
     QPushButton#primary:pressed {{ background: {c.accent}; }}
     QPushButton#primary:disabled {{ background: {c.raised}; color: {c.dim}; border-color: {c.raised}; font-weight: 500; }}
     QToolButton::menu-indicator {{ image: none; width: 0; }}
+    QToolButton#convtitle {{ background: transparent; border: none; border-radius: 8px; padding: 2px 6px; }}
+    QToolButton#convtitle:hover {{ background: {c.raised}; }}
+    QToolButton#convtitle:pressed, QToolButton#convtitle:open {{ background: {c.accent_soft}; }}
 
     QCheckBox#chip {{ background: {c.surface}; border: 1px solid {c.border}; border-radius: 13px;
                       padding: 3px 11px; min-height: 18px; color: {c.dim}; }}

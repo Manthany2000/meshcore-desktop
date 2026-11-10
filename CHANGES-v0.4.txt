@@ -6,6 +6,8 @@ Trace message: A new view on the Map / Network tab, beside Map and Graph. A note
 
 Resizable tiled panels: Drag the grip between two panels to resize them. Panels no longer scroll sideways. Their content reflows to fit instead: message bubbles wrap, the Dashboard stacks its tiles and charts, and the Repeater screen drops to one column of values with its buttons wrapped underneath. A panel won't shrink below 320 px, so nothing gets cut off.
 
+Flood a direct message: In a DM, a Flood button at the top right forgets the stored path to that contact, so the next message floods the whole mesh and their reply sets a fresh path. While there's no stored path it reads "Flooding" and is greyed out. Clicking the contact's name at the top opens their menu: Reset path, Show on map, Copy public key, and Manage repeater for repeaters.
+
 The ⋯ menu: Send advert, Forget pairing, Message details (Ctrl+I), Compact layout (Ctrl+M) and Accent colour are now in a menu at the right end of the toolbar.
 
 CHANGED
@@ -23,6 +25,10 @@ Small screens: The window opens no larger than your screen, and the sidebar is n
 Map legend: The legend is a single row, so it no longer covers half of a small map.
 
 FIXED
+
+A DM's route now updates as soon as the node learns a new path. It used to change only when the whole contact list reloaded.
+
+"1 hops" now reads "1 hop".
 
 The Refresh button on the Repeater screen no longer covers the "Updated" time in compact mode.
 

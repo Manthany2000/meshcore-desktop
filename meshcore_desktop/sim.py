@@ -45,10 +45,10 @@ class SimTransport:
         self.key = _key("sim-self")
         self.clock = int(time.time()) - 3600  # a bit behind, so the app sets it
         self.queue: list[bytes] = []
-        self.contacts = [(n, _key(n), t, la, lo, h) for n, t, la, lo, h in CONTACTS]
+        self.contacts = [[n, _key(n), t, la, lo, h] for n, t, la, lo, h in CONTACTS]
         if visitor:
             name = f"Visitor-{random.randint(1000, 9999)}"
-            self.contacts.append((name, _key(name), P.ADV_CHAT, 42.37, -71.22, 1))
+            self.contacts.append([name, _key(name), P.ADV_CHAT, 42.37, -71.22, 1])
         self.repeaters = [c for c in self.contacts if c[2] == P.ADV_REPEATER]
         self.channels = {0: ("Public", PUBLIC_SECRET), 1: ("#test", hashlib.sha256(b"#test").digest()[:16])}
         self.task = None
@@ -78,6 +78,9 @@ class SimTransport:
         path = bytes(r[1][0] for r in self.repeaters[:max(hops, 0)]).ljust(64, b"\0")
         return (bytes([code]) + key + bytes([typ, 0, path_len]) + path + name.encode().ljust(32, b"\0")
                 + struct.pack("<IiiI", self.clock - 600, int(lat * 1e6), int(lon * 1e6), self.clock - 300))
+
+    def _contact(self, key_or_prefix: bytes):
+        return next((c for c in self.contacts if c[1].startswith(key_or_prefix)), None)
 
     def _chan_msg(self, ch, who, text, ts, hops=1, snr=6.5, v3=True) -> bytes:
         body = struct.pack("<BBBI", ch, hops, 0, ts) + f"{who}: {text}".encode()
@@ -254,7 +257,12 @@ class SimTransport:
         elif c == P.CMD_SEND_TXT_MSG:
             dest = b[7:13]
             ack = random.getrandbits(32)
-            out(struct.pack("<BBII", P.RESP_SENT, 1, ack, 6000))
+            ct = self._contact(dest)
+            flood = ct is None or ct[5] < 0
+            out(struct.pack("<BBII", P.RESP_SENT, 1 if flood else 0, ack, 6000))
+            if flood and ct is not None:  # the ack comes back along a fresh route
+                ct[5] = random.randint(0, 2)
+                out(bytes([P.PUSH_PATH_UPDATED]) + ct[1], random.uniform(1, 3))
             payload = bytes([dest[0], self.key[0]]) + random.randbytes(20)
             self._copies(P.PAYLOAD_TXT_MSG, payload, n=random.randint(0, 2))
             if random.random() < 0.8:
@@ -262,7 +270,17 @@ class SimTransport:
                 if random.random() < 0.5:
                     self.queue.append(self._dm(dest, "copy that 👍", self.clock_now()))
                     out(bytes([P.PUSH_MSG_WAITING]), 5)
-        elif c in (P.CMD_SEND_SELF_ADVERT, P.CMD_RESET_PATH):
+        elif c == P.CMD_RESET_PATH:
+            ct = self._contact(b[1:33])
+            if ct is None:
+                out(bytes([P.RESP_ERR, 2]))
+                return
+            ct[5] = -1
+            out(bytes([P.RESP_OK]))
+        elif c == P.CMD_GET_CONTACT_BY_KEY:
+            ct = self._contact(b[1:33])
+            out(self._contact_frame(ct) if ct else bytes([P.RESP_ERR, 2]))
+        elif c == P.CMD_SEND_SELF_ADVERT:
             out(bytes([P.RESP_OK]))
         else:
             out(bytes([P.RESP_ERR, 1]))

@@ -19,6 +19,7 @@ A desktop chat app for a MeshCore node running companion firmware, over Bluetoot
 - Repeats: how many relayed copies your node heard of each message (yours too), which
   repeaters relayed it, which you heard directly and at what SNR, and the path it took
 - Delivery status on DMs (✓✓ delivered with round-trip time, ✗ no ack, right-click → send again)
+- In a DM, the header shows the route to the contact. Click their name for its menu, or press **Flood** to forget the stored path so the next message floods the mesh and their reply sets a fresh one
 - Contacts: type and last heard, click one for its hops and route; reset route; message from the list
 - Add `#hashtag` or private channels, remove channels
 - Map with type icons, clustering, live packet paths, and full details on hover or click

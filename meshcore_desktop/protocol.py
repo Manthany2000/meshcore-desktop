@@ -372,6 +372,10 @@ def reset_path(key: bytes) -> bytes:
     return bytes([CMD_RESET_PATH]) + key[:32]
 
 
+def get_contact(key: bytes) -> bytes:
+    return bytes([CMD_GET_CONTACT_BY_KEY]) + key[:32]
+
+
 def simple(cmd: int) -> bytes:
     return bytes([cmd])
 

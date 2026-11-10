@@ -99,6 +99,9 @@ class Session:
             return
         if f.kind == "msg_waiting":
             self._sync_wanted.set()
+        elif f.kind == "path_updated" and self.connected:
+            # A flood reached them and the node learned a route: fetch it so the header shows it.
+            self._tasks.append(asyncio.create_task(self.request(P.get_contact(f.key), {"contact"})))
         live = not self._syncing_backlog
         try:
             self.model.apply(f, live)
@@ -267,8 +270,11 @@ class Session:
         return await self.request(P.send_advert(flood), {"ok"})
 
     async def reset_path(self, key: bytes):
+        """Forgets the node's stored route to a contact, so the next message to
+        them floods and the reply teaches the node a fresh one."""
         f = await self.request(P.reset_path(key), {"ok"})
-        await self.request(P.simple(P.CMD_GET_CONTACTS), {"contacts_end"}, timeout=60)
+        if f and f.kind == "ok":
+            await self.request(P.get_contact(key), {"contact"})
         return f
 
     async def set_channel(self, idx: int, name: str, secret: bytes):
