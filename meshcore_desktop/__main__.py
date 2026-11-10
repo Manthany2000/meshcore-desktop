@@ -53,7 +53,7 @@ def main():
     app.setApplicationName("MeshCore Desktop")
     app.setDesktopFileName("meshcore-desktop")
     app.setWindowIcon(app_icon())
-    theme.follow_system(app, settings().value("accent", "Teal"))
+    theme.follow_system(app, settings().value("accent", "Signal green"))
     app.setQuitOnLastWindowClosed(False)  # the window's closeEvent disconnects, then quits
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)

@@ -12,7 +12,7 @@ import secrets
 import time
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QFont, QKeySequence, QLinearGradient, QPainter, QPalette, QPen, QTextDocument, QTextOption, QFontMetrics
+from PySide6.QtGui import QAction, QColor, QFont, QKeySequence, QPainter, QPalette, QPen, QTextDocument, QTextOption, QFontMetrics
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QDialog, QDialogButtonBox, QFormLayout, QFrame,
                                QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListView, QListWidget, QListWidgetItem,
                                QMainWindow, QMenu, QMessageBox, QPushButton, QSplitter, QStackedWidget, QStyle, QStyledItemDelegate,
@@ -132,7 +132,7 @@ class ChatView(QListView):
 
 
 class Bubble(QStyledItemDelegate):
-    PAD, GAP, RADIUS = 11, 4, 13
+    PAD, GAP, RADIUS = 10, 3, 4
     SLIDE_S, BUMP_S = .24, .6
 
     def __init__(self, win: "MainWindow", view: QListView):
@@ -200,7 +200,7 @@ class Bubble(QStyledItemDelegate):
             t = theme.current
             col = {DELIVERED: t.ok, NO_ACK: t.danger, FAILED: t.danger}.get(m.status, dim)
             foot.append(f'<span style="color:{col}">{st}</span>')
-        parts.append(f'<div style="color:{dim}; font-size:small">{" · ".join(foot)}</div>')
+        parts.append(f'<div style="color:{dim}; font-size:small; font-family:{theme.MONO}">{"  ".join(foot)}</div>')
         return "".join(parts)
 
     def _doc(self, m: Message, maxw: int) -> QTextDocument:
@@ -256,26 +256,17 @@ class Bubble(QStyledItemDelegate):
         p.setRenderHint(QPainter.Antialiasing)
         if self._has_avatar(m):
             theme.draw_avatar(p, QRectF(r.left() + 16, rect.top(), self.AVATAR, self.AVATAR), m.sender)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(0, 0, 0, 70 if t.dark else 26))  # a soft edge underneath
-        p.drawRoundedRect(rect.translated(0, 1.5), self.RADIUS, self.RADIUS)
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         if selected:
             p.setPen(QColor(t.accent))
-        elif me and not m.outgoing and f"@[{me}]" in m.text:
-            p.setPen(QColor(t.warn))
         elif m.outgoing or t.dark:
             p.setPen(Qt.NoPen)
         else:
             p.setPen(QColor(t.border))  # white on near-white needs an edge
-        if m.outgoing:
-            grad = QLinearGradient(rect.topLeft(), rect.bottomRight())
-            grad.setColorAt(0, bg)
-            grad.setColorAt(1, bg.lighter(125) if t.dark else bg.darker(107))
-            p.setBrush(grad)
-        else:
-            p.setBrush(bg)
+        p.setBrush(bg)
         p.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
+        if me and not m.outgoing and f"@[{me}]" in m.text and not selected:
+            p.fillRect(QRectF(rect.left(), rect.top(), 3, rect.height()), QColor(t.warn))  # a margin mark, not a glow
         if id(m) in self.bumps:
             f = min(1.0, (now - self.bumps[id(m)]) / self.BUMP_S)
             ring = QColor(t.accent)
@@ -311,15 +302,12 @@ class ChatRow(QStyledItemDelegate):
             p.drawText(r.adjusted(12, 2 if theme.compact else 8, 0, 0), Qt.AlignLeft | Qt.AlignVCenter, title)
             p.restore()
             return
-        row = r.adjusted(2, 2, -2, -2)
+        row = r.adjusted(0, 1, 0, -1)
         if option.state & QStyle.StateFlag.State_Selected:
-            p.setPen(QColor(t.accent))
-            p.setBrush(QColor(t.accent_soft))
-            p.drawRoundedRect(row, 11, 11)
+            p.fillRect(row, QColor(t.accent_soft))
+            p.fillRect(QRectF(row.left(), row.top(), 3, row.height()), QColor(t.accent))
         elif option.state & QStyle.StateFlag.State_MouseOver:
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor(t.raised))
-            p.drawRoundedRect(row, 11, 11)
+            p.fillRect(row, QColor(t.raised))
         d = 22 if theme.compact else 30
         theme.draw_avatar(p, QRectF(row.left() + 7, row.center().y() - d / 2, d, d), title, conv.startswith("ch:"))
         right = row.right() - 10
@@ -328,11 +316,11 @@ class ChatRow(QStyledItemDelegate):
             bf = QFont(f)
             bf.setBold(True)
             bf.setPixelSize(11)
-            w = max(20, QFontMetrics(bf).horizontalAdvance(label) + 12)
-            badge = QRectF(right - w, row.center().y() - 10, w, 20)
+            w = max(18, QFontMetrics(bf).horizontalAdvance(label) + 10)
+            badge = QRectF(right - w, row.center().y() - 8, w, 16)
             p.setPen(Qt.NoPen)
-            p.setBrush(theme.accent_gradient(badge))
-            p.drawRoundedRect(badge, 10, 10)
+            p.setBrush(QColor(t.accent))
+            p.drawRoundedRect(badge, 2, 2)
             p.setFont(bf)
             p.setPen(QColor(t.on_accent))
             p.drawText(badge, Qt.AlignCenter, label)
