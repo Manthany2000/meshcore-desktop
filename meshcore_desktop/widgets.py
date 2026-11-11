@@ -243,7 +243,7 @@ class Welcome(QWidget):
         self.mark = QLabel(alignment=Qt.AlignCenter)
         self.mark.setPixmap(theme.logo(72))
         title = QLabel("MeshCore Desktop", objectName="hero", alignment=Qt.AlignCenter)
-        sub = QLabel("Chat, map and manage your mesh over Bluetooth", objectName="dim", alignment=Qt.AlignCenter)
+        sub = QLabel("Chat, map and manage your mesh over Bluetooth or USB", objectName="dim", alignment=Qt.AlignCenter)
         over.addWidget(self.mark)
         over.addWidget(title)
         over.addWidget(sub)

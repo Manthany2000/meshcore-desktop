@@ -2,7 +2,7 @@
 
 A desktop chat app for a MeshCore node running companion firmware, over Bluetooth LE and newly added USB node support
 
-> **Early version.** All features have been tested on Linux ( Fedora build ) and work. Windows builds are tested by KA1CM and working as of the current build
+> **v1.0.** All features have been tested on Linux ( Fedora build ) and work. Windows builds are tested by KA1CM and working as of the current build
 
 ![MeshCore Desktop messages](docs/messages.png)
 
@@ -36,7 +36,8 @@ A desktop chat app for a MeshCore node running companion firmware, over Bluetoot
 - Sends zero-hop or flood adverts; sets the node's clock from the PC if it's behind
 - Messages saved per node (~/.local/share/meshcore-desktop on Linux, %LOCALAPPDATA%\MeshCore Desktop on
   Windows, or a `data` folder beside the packaged app); reconnects when the link drops
-- Runs on Linux (BlueZ) and Windows 10 1809+ (WinRT); pairing asks for the node's PIN in the app on both
+- Connects over Bluetooth LE or USB serial; plugged-in nodes show up in the connect list by themselves
+- Runs on Linux (BlueZ) and Windows 10 1809+ (WinRT); Bluetooth pairing asks for the node's PIN in the app on both
 
 ## Live traffic
 
@@ -62,8 +63,9 @@ type, SNR, RSSI, hops and path. It's a separate window, so it can stay open besi
 
 ## Install
 
-You need a computer with Bluetooth LE and a node running MeshCore **companion** firmware with Bluetooth enabled.
-To try the app without a radio, use `--sim` below.
+You need a node running MeshCore **companion** firmware, and either Bluetooth LE on the computer (with the
+Bluetooth companion firmware) or a USB cable (with the USB companion firmware). To try the app without a radio,
+use `--sim` below.
 
 ### Download a release
 
@@ -113,13 +115,28 @@ py -m venv .venv
 ./meshcore-desktop            # pick a node from the scan
 ./meshcore-desktop --sim      # a simulated node, no radio needed
 ./meshcore-desktop --address AA:BB:CC:DD:EE:FF
+./meshcore-desktop --port /dev/ttyACM0     # a node on USB (COM3 and so on on Windows)
 .venv/bin/python -m pytest tests
 ```
 
 On Windows, use `.venv\Scripts\python -m meshcore_desktop` in place of `./meshcore-desktop`.
 
 The node takes one BLE client at a time, so disconnect the phone app or anything else using it first.
-The first connection pairs: the app asks for the PIN shown on the node's screen.
+The first Bluetooth connection pairs: the app asks for the PIN shown on the node's screen.
+
+## USB nodes
+
+Plug the node in and open **Connect**: USB serial ports are listed as `USB: <board> (<port>)` next to the Bluetooth
+scan results, and the list updates as boards are plugged in or out. Pick one and connect; there's no PIN or pairing.
+If the cable comes out, the app reconnects when it's plugged back in.
+
+The node needs the **USB** companion firmware (`companion_radio_usb`, "Companion USB" on the MeshCore web flasher).
+A Bluetooth companion build doesn't talk to the app over its USB port. Everything else works the same over USB:
+messages, repeats, map, waterfall and repeater management.
+
+On Linux your user needs to be in the `dialout` group to open serial ports (`sudo usermod -aG dialout $USER`, then
+log out and back in); the app says so if it's missing. On Windows, boards with a CP210x or CH340 chip may need the
+chip maker's driver.
 
 Repeat counts and paths come from the node's raw packet log (push 0x88), so messages that
 were queued on the node while nothing was connected have neither.

@@ -1,4 +1,4 @@
-"""python -m meshcore_desktop [--sim | --address AA:BB:..] [--data DIR]"""
+"""python -m meshcore_desktop [--sim | --address AA:BB:.. | --port /dev/ttyACM0] [--data DIR]"""
 import argparse
 import asyncio
 import logging
@@ -12,13 +12,14 @@ from PySide6.QtWidgets import QApplication
 from . import theme
 from .desktop import app_icon, settings
 from .model import DATA_DIR, Model
+from .serial_link import PREFIX as SERIAL_PREFIX
 from .ui import SIM, MainWindow
 
 INSTANCE = "meshcore-desktop"
 
 
 def already_running() -> bool:
-    """Only one copy: the node takes one Bluetooth client at a time anyway.
+    """Only one copy: the node takes one client at a time anyway.
     If one is open, ask it to come to the front and say so."""
     s = QLocalSocket()
     s.connectToServer(INSTANCE)
@@ -34,6 +35,7 @@ def main():
     ap = argparse.ArgumentParser(prog="meshcore-desktop")
     ap.add_argument("--sim", action="store_true", help="connect to a simulated node")
     ap.add_argument("--address", help="connect to this node's BLE address at start")
+    ap.add_argument("--port", help="connect to a node on this USB serial port at start (/dev/ttyACM0, COM3)")
     ap.add_argument("--data", type=Path, default=DATA_DIR, help="where messages are saved")
     ap.add_argument("-v", "--verbose", action="store_true")
     args, rest = ap.parse_known_args()
@@ -58,7 +60,8 @@ def main():
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
 
-    win = MainWindow(Model(args.data), SIM if args.sim else args.address)
+    start = SIM if args.sim else (SERIAL_PREFIX + args.port if args.port else args.address)
+    win = MainWindow(Model(args.data), start)
 
     server = QLocalServer()
     QLocalServer.removeServer(INSTANCE)  # left behind if a previous copy crashed

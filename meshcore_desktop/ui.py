@@ -29,6 +29,8 @@ from .widgets import Radar, Toast, Welcome, battery_pixmap, fade_in, signal_html
 from .desktop import notify, settings, short_date
 from .pairing import PairingError
 from .link import BleTransport, BondError, Session, scan
+from . import serial_link
+from .serial_link import SerialTransport, is_serial
 from .model import (DELIVERED, FAILED, INCOMING, NO_ACK, SENDING, SENT, WAITING, Message, Model, chan_conv, dm_conv)
 
 log = logging.getLogger("ui")
@@ -384,13 +386,19 @@ class ConnectDialog(QDialog):
         lay = QVBoxLayout(self)
         self.radar = Radar()
         lay.addWidget(self.radar)
-        lay.addWidget(QLabel("Nodes in range running MeshCore companion firmware.\n"
-                             "The first time, you're asked for the PIN shown on the node's screen."))
+        lay.addWidget(QLabel("Nodes in range running MeshCore companion firmware, and nodes plugged in over USB.\n"
+                             "Over Bluetooth, the first time, you're asked for the PIN shown on the node's screen.",
+                             wordWrap=True))
         self.list = QListWidget()
         lay.addWidget(self.list)
         if last and last != SIM:
-            self._add(last, f"Last used ({last})")
+            what = "USB " + serial_link.port_of(last) if is_serial(last) else last
+            self._add(last, f"Last used ({what})")
         self._add(SIM, "Simulated node (no radio)")
+        self._usb()
+        # Notice a node being plugged in while the dialog is open.
+        self.usb_timer = QTimer(self, interval=2000, timeout=self._usb)
+        self.usb_timer.start()
         row = QHBoxLayout()
         self.scan_btn = QPushButton("Scan")
         self.scan_btn.clicked.connect(lambda: asyncio.ensure_future(self.do_scan()))
@@ -413,6 +421,22 @@ class ConnectDialog(QDialog):
         if self.list.count() == 1:
             self.list.setCurrentRow(0)
 
+    def _usb(self):
+        try:
+            found = serial_link.ports()
+        except Exception as e:
+            log.warning("listing serial ports: %s", e)
+            return
+        for addr, label, _known in found:
+            self._set(addr, f"USB: {label}")
+
+    def _set(self, addr, label):
+        for i in range(self.list.count()):
+            if self.list.item(i).data(Qt.UserRole) == addr:
+                self.list.item(i).setText(label)
+                return
+        self._add(addr, label)
+
     async def do_scan(self):
         self.scan_btn.setEnabled(False)
         self.status.setText("Scanning…")
@@ -424,14 +448,8 @@ class ConnectDialog(QDialog):
             self.radar.running = False
             self.scan_btn.setEnabled(True)
             return
-        have = {self.list.item(i).data(Qt.UserRole) for i in range(self.list.count())}
         for addr, name, rssi in found:
-            if addr in have:
-                for i in range(self.list.count()):
-                    if self.list.item(i).data(Qt.UserRole) == addr:
-                        self.list.item(i).setText(f"{name}  ({addr}, {rssi} dBm)")
-            else:
-                self._add(addr, f"{name}  ({addr}, {rssi} dBm)")
+            self._set(addr, f"{name}  ({addr}, {rssi} dBm)")
         self.radar.running = False
         self.radar.set_found(len(found))
         self.status.setText(f"{len(found)} found" if found else "None found. Is a phone connected to it?")
@@ -861,13 +879,18 @@ class MainWindow(QMainWindow):
         if self.address == SIM:
             from .sim import SimTransport
             t = SimTransport(visitor=True)
+        elif is_serial(self.address):
+            t = SerialTransport(self.address)
         else:
             t = BleTransport(self.address, self.ask_pin)
         self.session = Session(self.model, t, self.set_state)
         try:
             await self.session.start()
         except Exception as e:
-            log.exception("connect")
+            if type(e) is ConnectionError:  # not found, in use and the like: the message says it all
+                log.warning("connect: %s", e)
+            else:
+                log.exception("connect")
             try:
                 await t.close()
             except Exception:
@@ -917,7 +940,7 @@ class MainWindow(QMainWindow):
         await self._connect()
 
     def forget_pairing(self):
-        if not self.address or self.address == SIM:
+        if not self.address or self.address == SIM or is_serial(self.address):
             return
         if QMessageBox.question(self, "Forget pairing", f"Remove the Bluetooth pairing with {self.address}? "
                                 "You'll be asked for the PIN on the next connect.") != QMessageBox.Yes:
@@ -951,7 +974,7 @@ class MainWindow(QMainWindow):
         self.waterfall.set_live(ready)
         self.connect_act.setVisible(state == "disconnected")
         self.disconnect_act.setVisible(state != "disconnected")
-        self.unpair_act.setEnabled(bool(self.address) and self.address != SIM)
+        self.unpair_act.setEnabled(bool(self.address) and self.address != SIM and not is_serial(self.address))
         self.advert_btn.setEnabled(ready)
         self.admin.link_changed(state)
         self._count()
@@ -1074,6 +1097,10 @@ class MainWindow(QMainWindow):
         di = self.model.device_info
         if di and di.fw:
             full.append("Firmware " + html.escape(di.fw))
+        if is_serial(self.address):
+            full.append("Over USB · " + html.escape(serial_link.port_of(self.address)))
+        elif self.address and self.address != SIM:
+            full.append("Over Bluetooth · " + html.escape(self.address))
         self.node_label.setText(" &nbsp;".join(short))
         self.node_label.setToolTip("<br>".join(full))
         self.batt_icon.setToolTip(self.node_label.toolTip())

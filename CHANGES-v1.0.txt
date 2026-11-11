@@ -1,0 +1,17 @@
+MeshCore Desktop v1.0
+
+NEW
+
+USB nodes: The app now connects to a node over a USB cable as well as over Bluetooth. Plug the node in and open Connect: USB serial ports show up in the list as "USB: <board> (<port>)" beside the Bluetooth scan results, and the list updates by itself as boards are plugged in or out. There's no PIN or pairing over USB. If the cable comes out, the app reconnects once it's plugged back in. Messages, repeats, the map, the waterfall and repeater management all work the same as over Bluetooth.
+
+The node needs MeshCore's USB companion firmware ("Companion USB" on the web flasher). A Bluetooth companion build doesn't talk to the app over its USB port.
+
+Start straight on a USB node with --port /dev/ttyACM0 (or --port COM3 on Windows).
+
+Hover the node name in the toolbar to see whether you're connected over USB or Bluetooth, and on which port or address.
+
+On Linux, opening a serial port needs the dialout group; if you're not in it, the app tells you the command to fix it.
+
+CHANGED
+
+Forget pairing in the ⋯ menu is greyed out while a USB node is selected, since there's nothing to unpair.

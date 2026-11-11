@@ -1,6 +1,7 @@
 bleak==3.0.2
 qasync==0.28.0
 cryptography==50.0.2
+pyserial==3.5
 # <6.12: Qt 6.12 calls mscms WcsCreateIccProfile, which Wine/Proton only stub (aborts at start).
 PySide6>=6.7,<6.12
 dbus-fast; sys_platform == "linux"
