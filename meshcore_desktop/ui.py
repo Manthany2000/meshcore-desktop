@@ -745,6 +745,7 @@ class MainWindow(QMainWindow):
         # The packet waterfall sits right after the view chips (after Dashboard).
         self.waterfall = Waterfall()
         self.waterfall.clicked.connect(lambda: self.center.setCurrentWidget(self.dashboard))
+        self.waterfall.expand.connect(self.waterfall.open_big)
         bar = self.center.bar
         at = bar.indexOf(self.center.chips[self.center.indexOf(self.dashboard)]) + 1
         bar.insertSpacing(at, 6)
