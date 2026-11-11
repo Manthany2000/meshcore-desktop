@@ -1,6 +1,6 @@
 # MeshCore Desktop
 
-A desktop chat app for a MeshCore node running companion firmware, over Bluetooth LE.
+A desktop chat app for a MeshCore node running companion firmware, over Bluetooth LE and newly added USB node support
 
 > **Early version.** All features have been tested on Linux ( Fedora build ) and work. Windows builds are tested by KA1CM and working as of the current build
 
