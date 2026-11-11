@@ -25,6 +25,7 @@ A desktop chat app for a MeshCore node running companion firmware, over Bluetoot
 - Map with type icons, clustering, live packet paths, and full details on hover or click
 - Messages, map, repeater and dashboard as tiled panels: open several at once, close each individually, and drag a title onto another panel to swap them
 - Live traffic: every packet your connected node receives, as it arrives, on the Dashboard
+- Packet waterfall in the toolbar, like an SDR's: each packet heard lands by its SNR and scrolls down; double-click it for a big window with minutes of history
 - Dashboard with nodes heard, busiest repeaters and channel activity
 - Map / Network tab: switch between the map, where each packet your node hears draws its path, and a graph of who relays through whom
 - Trace message: with the map open, double-click a received message to draw the path it took in red
@@ -45,6 +46,19 @@ acks and other people's messages, so you can see how busy the mesh is around you
 count cover the current session.
 
 ![Live packets on the Dashboard](docs/dashboard.png)
+
+## Packet waterfall
+
+The strip in the toolbar, right after the view chips, is a waterfall of the packets your node hears, drawn like an SDR's.
+Across is SNR, from −20 dB on the left to +15 dB on the right; down is time, newest at the top. Each packet leaves a
+hot spot (blue → cyan → yellow → red as it gets stronger) that scrolls away, so a quiet mesh stays dark and a busy
+one lights up. Hover it for the last minute's packet count and SNR, click it for the Dashboard.
+
+Double-click it for the **Packet waterfall** window: the same picture, bigger, with SNR and time axes and about four
+minutes on screen. It opens already filled in from the last 15 minutes, and hovering a spot shows that packet's time,
+type, SNR, RSSI, hops and path. It's a separate window, so it can stay open beside the app.
+
+![Packet waterfall window](docs/waterfall.png)
 
 ## Install
 

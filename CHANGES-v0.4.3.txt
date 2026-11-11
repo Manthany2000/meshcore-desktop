@@ -1,5 +1,11 @@
 MeshCore Desktop v0.4.3
 
+NEW
+
+Packet waterfall: A small waterfall in the toolbar, right after the Dashboard chip, shows every packet your node hears, like the waterfall on an SDR. Across is SNR, weak (−20 dB) on the left to strong (+15 dB) on the right, with a tick at 0 dB. Down is time, newest at the top. Each packet leaves a hot spot that goes from blue to cyan, yellow and red as it gets stronger, then scrolls away, so a quiet mesh stays dark and a busy one lights up. Hover it for the last minute's packet count and average and best SNR. Click it to open the Dashboard. It goes dark and still while you're disconnected.
+
+Big waterfall window: Double-click the waterfall to open it in its own resizable window, with SNR along the bottom, time down the side and about four minutes on screen. It opens already filled in from the last 15 minutes of packets, then keeps scrolling live. Hover a spot to see that packet: when it arrived, its type (channel message, advert, ack and so on), SNR and RSSI, flood or direct with the hop count, and the path it took. The window can stay open beside the app.
+
 CHANGED
 
 New look: The app has a plainer, hand-built style that suits a radio tool. One flat signal-green accent replaces the teal gradients, and the glows, drop shadows and round pill buttons are gone. Buttons, boxes and panels have small square corners. Tabs and the view chips in the toolbar are plain text with a line under the one that's open. The connection status is a thin outlined tag, and unread counts are small square tags.
