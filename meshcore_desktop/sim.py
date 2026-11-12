@@ -37,12 +37,19 @@ CHATTER = ["anyone on tonight?", "test from the car", "good copy here, 3 hops", 
 
 
 class SimTransport:
-    def __init__(self, visitor: bool = False):
+    def __init__(self, visitor: bool = False, fresh: bool = False):
         self.visitor = visitor  # a different unknown node in the list each run, as if heard while the app was closed
         self.on_frame = lambda b: None
         self.on_disconnect = lambda: None
         self.name = "SimNode"
         self.key = _key("sim-self")
+        # What the setup commands change, as the firmware keeps them.
+        self.radio = (910525, 62500, 7, 5)  # kHz, Hz, sf, cr
+        self.tx_power, self.max_tx = 22, 22
+        self.lat, self.lon = 42356000, -71100000
+        self.multi_acks, self.loc_policy, self.telemetry, self.manual_add = 0, 0, 0, 0
+        self.pin, self.path_hash_mode = 0, 0
+        self.reboots = 0
         self.clock = int(time.time()) - 3600  # a bit behind, so the app sets it
         self.queue: list[bytes] = []
         self.contacts = [[n, _key(n), t, la, lo, h] for n, t, la, lo, h in CONTACTS]
@@ -58,6 +65,13 @@ class SimTransport:
         # Queued while no app was connected: the old frame format.
         self.queue.append(self._chan_msg(0, "alice", "morning all", now - 1800, v3=False))
         self.queue.append(self._dm(self.contacts[5][1], "you around later?", now - 900, v3=False))
+        if fresh:  # just flashed: default name, radio and position, nothing heard yet
+            self.key = _key("sim-fresh")
+            self.name = self.key[:4].hex().upper()
+            self.radio = (869618, 62500, 8, 8)
+            self.lat = self.lon = 0
+            self.contacts, self.repeaters, self.queue = [], [], []
+            self.channels = {0: ("Public", PUBLIC_SECRET)}
 
     async def connect(self):
         await asyncio.sleep(0.3)
@@ -209,11 +223,54 @@ class SimTransport:
         out = self._push
         if c == P.CMD_APP_START:
             self._t0 = time.monotonic()
-            out(bytes([P.RESP_SELF_INFO, 1, 22, 22]) + self.key + struct.pack("<ii", 42356000, -71100000)
-                + bytes(4) + struct.pack("<IIBB", 910525, 62500, 7, 5) + self.name.encode())
+            out(struct.pack("<BBbB", P.RESP_SELF_INFO, 1, self.tx_power, self.max_tx) + self.key
+                + struct.pack("<ii", self.lat, self.lon)
+                + bytes([self.multi_acks, self.loc_policy, self.telemetry, self.manual_add])
+                + struct.pack("<IIBB", *self.radio) + self.name.encode())
         elif c == P.CMD_DEVICE_QUERY:
-            out(bytes([P.RESP_DEVICE_INFO, 14, 175, 8]) + bytes(4) + b"05 Nov 2026".ljust(12, b"\0")
-                + b"Simulated".ljust(40, b"\0") + b"sim-1.0".ljust(20, b"\0"))
+            out(bytes([P.RESP_DEVICE_INFO, 14, 175, 8]) + struct.pack("<I", self.pin) + b"05 Nov 2026".ljust(12, b"\0")
+                + b"Simulated".ljust(40, b"\0") + b"sim-1.0".ljust(20, b"\0") + bytes([0, self.path_hash_mode]))
+        elif c == P.CMD_SET_ADVERT_NAME and len(b) >= 2:
+            self.name = b[1:32].decode("utf-8", "replace")
+            out(bytes([P.RESP_OK]))
+        elif c == P.CMD_SET_RADIO_PARAMS:
+            f, bw, sf, cr = struct.unpack_from("<IIBB", b, 1)
+            if 150000 <= f <= 2500000 and 5 <= sf <= 12 and 5 <= cr <= 8 and 7000 <= bw <= 500000:
+                self.radio = (f, bw, sf, cr)
+                out(bytes([P.RESP_OK]))
+            else:
+                out(bytes([P.RESP_ERR, 6]))
+        elif c == P.CMD_SET_RADIO_TX_POWER:
+            dbm = struct.unpack_from("b", b, 1)[0]
+            if -9 <= dbm <= self.max_tx:
+                self.tx_power = dbm
+                out(bytes([P.RESP_OK]))
+            else:
+                out(bytes([P.RESP_ERR, 6]))
+        elif c == P.CMD_SET_ADVERT_LATLON and len(b) >= 9:
+            self.lat, self.lon = struct.unpack_from("<ii", b, 1)
+            out(bytes([P.RESP_OK]))
+        elif c == P.CMD_SET_OTHER_PARAMS:
+            self.manual_add = b[1]
+            if len(b) >= 5:
+                self.telemetry, self.loc_policy, self.multi_acks = b[2], b[3], b[4]
+            out(bytes([P.RESP_OK]))
+        elif c == P.CMD_SET_DEVICE_PIN and len(b) >= 5:
+            pin = struct.unpack_from("<I", b, 1)[0]
+            if pin == 0 or 100000 <= pin <= 999999:
+                self.pin = pin
+                out(bytes([P.RESP_OK]))
+            else:
+                out(bytes([P.RESP_ERR, 6]))
+        elif c == P.CMD_SET_PATH_HASH_MODE and len(b) >= 3 and b[1] == 0:
+            if b[2] < 3:
+                self.path_hash_mode = b[2]
+                out(bytes([P.RESP_OK]))
+            else:
+                out(bytes([P.RESP_ERR, 6]))
+        elif c == P.CMD_REBOOT and b[1:7] == b"reboot":
+            self.reboots += 1
+            asyncio.get_running_loop().call_later(0.2, self.on_disconnect)
         elif c == P.CMD_GET_DEVICE_TIME:
             out(struct.pack("<BI", P.RESP_CURR_TIME, self.clock_now()))
         elif c == P.CMD_SET_DEVICE_TIME:

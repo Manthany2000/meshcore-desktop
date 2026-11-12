@@ -31,6 +31,8 @@ from .pairing import PairingError
 from .link import BleTransport, BondError, Session, scan
 from . import serial_link
 from .serial_link import SerialTransport, is_serial
+from . import setup as node_setup
+from .setup_ui import SetupWizard
 from .model import (DELIVERED, FAILED, INCOMING, NO_ACK, SENDING, SENT, WAITING, Message, Model, chan_conv, dm_conv)
 
 log = logging.getLogger("ui")
@@ -38,6 +40,8 @@ log = logging.getLogger("ui")
 TYPE_NAMES = {P.ADV_CHAT: "Chat", P.ADV_REPEATER: "Repeater", P.ADV_ROOM: "Room", P.ADV_SENSOR: "Sensor"}
 MENTION = re.compile(r"@\[([^\]]{1,32})\]")
 SIM = "sim"
+SIM_FRESH = "sim-fresh"  # a simulated node that has just been flashed, for trying the setup
+SIMS = (SIM, SIM_FRESH)
 
 
 def ago(sec: float | None) -> str:
@@ -391,7 +395,7 @@ class ConnectDialog(QDialog):
                              wordWrap=True))
         self.list = QListWidget()
         lay.addWidget(self.list)
-        if last and last != SIM:
+        if last and last not in SIMS:
             what = "USB " + serial_link.port_of(last) if is_serial(last) else last
             self._add(last, f"Last used ({what})")
         self._add(SIM, "Simulated node (no radio)")
@@ -541,6 +545,7 @@ class MainWindow(QMainWindow):
         self.settings = settings()
         self.address = autoconnect or self.settings.value("address", "")
         self.want_connected = False
+        self._setup_offered = set()
         self.conv = ""
         self.reply_to: Message | None = None
         self.setWindowTitle("MeshCore Desktop")
@@ -595,6 +600,8 @@ class MainWindow(QMainWindow):
         adv = self.advert_btn = m.addMenu("Send advert")
         adv.addAction("Zero-hop (neighbours only)", lambda: self.run(self.session.advert(False), "Advert sent"))
         adv.addAction("Flood (whole mesh)", lambda: self.run(self.session.advert(True), "Flood advert sent"))
+        self.setup_act = m.addAction("Set up node…", self.setup_node)
+        self.setup_act.setToolTip("Name, radio, position, channels and PIN")
         self.unpair_act = m.addAction("Forget pairing…", self.forget_pairing)
         self.unpair_act.setToolTip("Forget this computer's Bluetooth pairing with the node")
         m.addSeparator()
@@ -876,9 +883,9 @@ class MainWindow(QMainWindow):
     async def _connect(self):
         if self.session:
             await self.session.stop()
-        if self.address == SIM:
+        if self.address in SIMS:
             from .sim import SimTransport
-            t = SimTransport(visitor=True)
+            t = SimTransport(visitor=self.address == SIM, fresh=self.address == SIM_FRESH)
         elif is_serial(self.address):
             t = SerialTransport(self.address)
         else:
@@ -940,7 +947,7 @@ class MainWindow(QMainWindow):
         await self._connect()
 
     def forget_pairing(self):
-        if not self.address or self.address == SIM or is_serial(self.address):
+        if not self.address or self.address in SIMS or is_serial(self.address):
             return
         if QMessageBox.question(self, "Forget pairing", f"Remove the Bluetooth pairing with {self.address}? "
                                 "You'll be asked for the PIN on the next connect.") != QMessageBox.Yes:
@@ -956,6 +963,42 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.statusBar().showMessage(f"Couldn't remove pairing: {e}", 8000)
         asyncio.ensure_future(go())
+
+    def setup_node(self):
+        if not self.session or not self.session.connected or not self.model.self_info:
+            return
+        SetupWizard(self, self.session, is_serial(self.address)).open()
+
+    def _offer_setup(self):
+        """Once per run for a node that's still as it was flashed, unless told not to."""
+        si = self.model.self_info
+        if self.state != "ready" or not node_setup.is_fresh(si) or self.findChild(SetupWizard):
+            return
+        key = si.key.hex()
+        never = self.settings.value("setup_never", []) or []
+        if isinstance(never, str):
+            never = [never]
+        if key in never or key in self._setup_offered:
+            return
+        self._setup_offered.add(key)
+        box = QMessageBox(QMessageBox.Question, "New node",
+                          f"<b>{html.escape(si.name)}</b> looks newly flashed: it still has its default name.<br><br>"
+                          "Set it up now? You'll pick its name, radio region, position and channels.",
+                          QMessageBox.NoButton, self)
+        go = box.addButton("Set up", QMessageBox.AcceptRole)
+        box.addButton("Not now", QMessageBox.RejectRole)
+        never_btn = box.addButton("Don't ask for this node", QMessageBox.DestructiveRole)
+        box.setDefaultButton(go)
+
+        def done(_r):
+            if box.clickedButton() is go:
+                self.setup_node()
+            elif box.clickedButton() is never_btn:
+                self.settings.setValue("setup_never", never + [key])
+        box.finished.connect(done)
+        box.open()
+
+    _setup_offered: set = set()
 
     def disconnect(self):
         self.want_connected = False
@@ -974,7 +1017,8 @@ class MainWindow(QMainWindow):
         self.waterfall.set_live(ready)
         self.connect_act.setVisible(state == "disconnected")
         self.disconnect_act.setVisible(state != "disconnected")
-        self.unpair_act.setEnabled(bool(self.address) and self.address != SIM and not is_serial(self.address))
+        self.unpair_act.setEnabled(bool(self.address) and self.address not in SIMS and not is_serial(self.address))
+        self.setup_act.setEnabled(ready)
         self.advert_btn.setEnabled(ready)
         self.admin.link_changed(state)
         self._count()
@@ -988,6 +1032,7 @@ class MainWindow(QMainWindow):
             self._refresh_lists()
             self._refresh_contacts()
             self._show_found_away()
+            QTimer.singleShot(300, self._offer_setup)
 
     # --- model events ---------------------------------------------------------------
 
@@ -1099,7 +1144,7 @@ class MainWindow(QMainWindow):
             full.append("Firmware " + html.escape(di.fw))
         if is_serial(self.address):
             full.append("Over USB · " + html.escape(serial_link.port_of(self.address)))
-        elif self.address and self.address != SIM:
+        elif self.address and self.address not in SIMS:
             full.append("Over Bluetooth · " + html.escape(self.address))
         self.node_label.setText(" &nbsp;".join(short))
         self.node_label.setToolTip("<br>".join(full))

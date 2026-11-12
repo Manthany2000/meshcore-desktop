@@ -1,0 +1,80 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="leaflet.css">
+<script src="leaflet.js"></script>
+<style>
+  html, body, #map { margin: 0; height: 100%; background: #aad3df; cursor: crosshair; }
+  body.dark #map { background: #1b1e22; }
+  body.dark .leaflet-tile-pane { filter: invert(1) hue-rotate(195deg) brightness(.82) contrast(.88) saturate(.45); }
+  .leaflet-container { cursor: crosshair; }
+  .leaflet-marker-draggable { cursor: grab; }
+  .pin-wrap { background: none; border: none; }
+  .pin { width: 22px; height: 22px; box-sizing: border-box; border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
+         border: 2px solid #fff; background: var(--accent, #2f9e44); box-shadow: 0 1px 6px rgba(0,0,0,.5); }
+  .tip { position: absolute; z-index: 1000; left: 50%; top: 10px; transform: translateX(-50%); pointer-events: none;
+         font: 12px system-ui, sans-serif; padding: 4px 12px; border-radius: 12px; background: rgba(255,255,255,.92);
+         color: #222; box-shadow: 0 1px 4px rgba(0,0,0,.3); white-space: nowrap; }
+  body.dark .tip { background: rgba(30,34,40,.92); color: #ddd; }
+  .other { background: none; border: none; box-shadow: none; font: 600 10px system-ui, sans-serif; color: #333;
+           text-shadow: 0 0 3px #fff, 0 0 3px #fff; padding: 0; }
+  body.dark .other { color: #ddd; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  .other::before { display: none; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="tip" id="tip">Click to place the node · drag the pin to adjust</div>
+<script>
+const map = L.map("map", {zoomControl: true, worldCopyJump: true, doubleClickZoom: false}).setView([20, 0], 2);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+}).addTo(map);
+const others = L.layerGroup().addTo(map);
+let pin = null;
+
+// The app listens for this on the console.
+function tell(what, arg) { console.info("meshcore:" + what + ":" + arg); }
+
+function wrap(lon) { return ((lon + 540) % 360) - 180; }
+
+function place(lat, lon, quiet) {
+  const ll = [lat, lon];
+  if (!pin) {
+    pin = L.marker(ll, {draggable: true, autoPan: true,
+      icon: L.divIcon({className: "pin-wrap", html: '<div class="pin"></div>', iconSize: [22, 22], iconAnchor: [11, 26]})
+    }).addTo(map);
+    pin.on("dragend", () => { const p = pin.getLatLng(); tell("pick", p.lat.toFixed(6) + "," + wrap(p.lng).toFixed(6)); });
+  } else {
+    pin.setLatLng(ll);
+  }
+  if (!quiet) tell("pick", lat.toFixed(6) + "," + wrap(lon).toFixed(6));
+}
+
+map.on("click", e => place(e.latlng.lat, e.latlng.lng, false));
+
+// From the app.
+function setPin(lat, lon, zoom) {
+  place(lat, lon, true);
+  if (zoom) map.setView([lat, lon], zoom); else if (!map.getBounds().contains([lat, lon])) map.panTo([lat, lon]);
+}
+function clearPin() { if (pin) { map.removeLayer(pin); pin = null; } }
+function look(lat, lon, zoom) { map.setView([lat, lon], zoom); }
+function lookBounds(pts) { map.fitBounds(pts, {maxZoom: 12, padding: [30, 30]}); }
+function setOthers(list) {
+  // Nodes already heard, as a guide to where the mesh is.
+  others.clearLayers();
+  for (const o of list) {
+    L.circleMarker([o.lat, o.lon], {radius: 4, weight: 1, color: "#fff", fillColor: "#666", fillOpacity: .8, interactive: false})
+      .bindTooltip(o.name, {permanent: true, direction: "right", className: "other", offset: [4, 0]}).addTo(others);
+  }
+}
+function setTheme(dark, accent) {
+  document.body.classList.toggle("dark", !!dark);
+  document.body.style.setProperty("--accent", accent);
+}
+setTimeout(() => document.getElementById("tip").style.display = "none", 6000);
+</script>
+</body>
+</html>

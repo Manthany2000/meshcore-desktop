@@ -13,7 +13,7 @@ from . import theme
 from .desktop import app_icon, settings
 from .model import DATA_DIR, Model
 from .serial_link import PREFIX as SERIAL_PREFIX
-from .ui import SIM, MainWindow
+from .ui import SIM, SIM_FRESH, MainWindow
 
 INSTANCE = "meshcore-desktop"
 
@@ -34,6 +34,7 @@ def already_running() -> bool:
 def main():
     ap = argparse.ArgumentParser(prog="meshcore-desktop")
     ap.add_argument("--sim", action="store_true", help="connect to a simulated node")
+    ap.add_argument("--sim-fresh", action="store_true", help="connect to a simulated, newly flashed node")
     ap.add_argument("--address", help="connect to this node's BLE address at start")
     ap.add_argument("--port", help="connect to a node on this USB serial port at start (/dev/ttyACM0, COM3)")
     ap.add_argument("--data", type=Path, default=DATA_DIR, help="where messages are saved")
@@ -60,7 +61,7 @@ def main():
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
 
-    start = SIM if args.sim else (SERIAL_PREFIX + args.port if args.port else args.address)
+    start = SIM_FRESH if args.sim_fresh else SIM if args.sim else (SERIAL_PREFIX + args.port if args.port else args.address)
     win = MainWindow(Model(args.data), start)
 
     server = QLocalServer()

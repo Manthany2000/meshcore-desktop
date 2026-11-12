@@ -15,6 +15,7 @@ TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # it notifies
 PASSWORD_MAX = 15  # the node sends at most this many bytes of a login password
 TEXT_MAX = 160  # MAX_TEXT_LEN; for channels it includes "name: ", and the node cuts the rest
 KEY_PREFIX = 6
+NAME_MAX = 31  # node_name[32] in the firmware's prefs
 
 # Commands, app to node.
 CMD_APP_START = 1
@@ -24,8 +25,13 @@ CMD_GET_CONTACTS = 4
 CMD_GET_DEVICE_TIME = 5
 CMD_SET_DEVICE_TIME = 6
 CMD_SEND_SELF_ADVERT = 7
+CMD_SET_ADVERT_NAME = 8
 CMD_SYNC_NEXT_MESSAGE = 10
+CMD_SET_RADIO_PARAMS = 11
+CMD_SET_RADIO_TX_POWER = 12
 CMD_RESET_PATH = 13
+CMD_SET_ADVERT_LATLON = 14
+CMD_REBOOT = 19
 CMD_GET_BATT_AND_STORAGE = 20
 CMD_DEVICE_QUERY = 22
 CMD_SEND_LOGIN = 26
@@ -33,6 +39,9 @@ CMD_SEND_STATUS_REQ = 27
 CMD_GET_CONTACT_BY_KEY = 30
 CMD_GET_CHANNEL = 31
 CMD_SET_CHANNEL = 32
+CMD_SET_DEVICE_PIN = 37
+CMD_SET_OTHER_PARAMS = 38
+CMD_SET_PATH_HASH_MODE = 61
 
 # Replies and pushes, node to app.
 RESP_OK = 0
@@ -263,8 +272,9 @@ def decode(b: bytes) -> Frame | None:
         # telemetry, manual_add, freq, bw, sf, cr, name
         if n < 58:
             return None
-        return F("self_info", key=bytes(b[4:36]), tx_power=b[2], max_tx=b[3],
-                 lat=_i32(b, 36) / 1e6, lon=_i32(b, 40) / 1e6,
+        return F("self_info", key=bytes(b[4:36]), tx_power=struct.unpack_from("b", b, 2)[0], max_tx=b[3],
+                 lat=_i32(b, 36) / 1e6, lon=_i32(b, 40) / 1e6, multi_acks=b[44], loc_policy=b[45],
+                 telemetry=b[46], manual_add=b[47],
                  freq=_u32(b, 48) / 1000, bw=_u32(b, 52) / 1000, sf=b[56], cr=b[57], name=_cstr(b[58:]))
     if c == RESP_CURR_TIME:
         return F("time", time=_u32(b, 1)) if n >= 5 else None
@@ -273,12 +283,15 @@ def decode(b: bytes) -> Frame | None:
     if c == RESP_BATT:
         return F("battery", mv=b[1] | b[2] << 8) if n >= 3 else None
     if c == RESP_DEVICE_INFO:
-        # code, ver, max_contacts/2, max_channels, ble_pin, date[12], maker[40], version[20]
+        # code, ver, max_contacts/2, max_channels, ble_pin, date[12], maker[40], version[20],
+        # client repeat (v9+), path hash mode (v10+)
         if n < 2:
             return None
         return F("device_info", protocol=b[1], max_contacts=b[2] * 2 if n > 2 else 0,
-                 max_channels=b[3] if n > 3 else 8, build=_cstr(b[8:20]) if n >= 20 else "",
-                 model=_cstr(b[20:60]) if n >= 60 else "", fw=_cstr(b[60:80]) if n >= 61 else "")
+                 max_channels=b[3] if n > 3 else 8, ble_pin=_u32(b, 4) if n >= 8 else 0,
+                 build=_cstr(b[8:20]) if n >= 20 else "",
+                 model=_cstr(b[20:60]) if n >= 60 else "", fw=_cstr(b[60:80]) if n >= 61 else "",
+                 path_hash_mode=b[81] if n >= 82 else 0)
     if c in (RESP_CONTACT_MSG, RESP_CHANNEL_MSG, RESP_CONTACT_MSG_V3, RESP_CHANNEL_MSG_V3):
         # V3 adds snr*4 and 2 reserved bytes. Messages the node queued while no
         # app was connected stay in the old format.
@@ -370,6 +383,43 @@ def send_advert(flood: bool) -> bytes:
 
 def reset_path(key: bytes) -> bytes:
     return bytes([CMD_RESET_PATH]) + key[:32]
+
+
+def set_name(name: str) -> bytes:
+    return bytes([CMD_SET_ADVERT_NAME]) + name.encode()[:NAME_MAX]
+
+
+def set_radio(freq_mhz: float, bw_khz: float, sf: int, cr: int) -> bytes:
+    """Frequency in kHz and bandwidth in Hz on the wire. No client-repeat byte,
+    so that stays off."""
+    return struct.pack("<BIIBB", CMD_SET_RADIO_PARAMS, round(freq_mhz * 1000), round(bw_khz * 1000), sf, cr)
+
+
+def set_tx_power(dbm: int) -> bytes:
+    return struct.pack("<Bb", CMD_SET_RADIO_TX_POWER, dbm)
+
+
+def set_latlon(lat: float, lon: float) -> bytes:
+    return struct.pack("<Bii", CMD_SET_ADVERT_LATLON, round(lat * 1e6), round(lon * 1e6))
+
+
+def set_pin(pin: int) -> bytes:
+    """0 or six digits. 0 is the firmware default: a random PIN on boards with
+    a screen, 123456 on the rest. Used from the next boot."""
+    return struct.pack("<BI", CMD_SET_DEVICE_PIN, pin)
+
+
+def set_other_params(manual_add: int, telemetry: int, loc_policy: int, multi_acks: int) -> bytes:
+    return bytes([CMD_SET_OTHER_PARAMS, manual_add, telemetry, loc_policy, multi_acks])
+
+
+def set_path_hash_mode(mode: int) -> bytes:
+    """Hash bytes per hop in the floods we send, minus one (0-2)."""
+    return bytes([CMD_SET_PATH_HASH_MODE, 0, mode])
+
+
+def reboot() -> bytes:
+    return bytes([CMD_REBOOT]) + b"reboot"
 
 
 def get_contact(key: bytes) -> bytes:

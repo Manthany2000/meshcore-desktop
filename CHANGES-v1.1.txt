@@ -1,0 +1,13 @@
+MeshCore Desktop v1.1
+
+NEW
+
+Node setup: Connect a newly flashed node and the app notices it still has its factory name (the first 8 hex digits of its key) and asks "Set it up now?". Answer Set up, Not now, or Don't ask for this node. The setup is also in the ⋯ menu as Set up node…, for any node.
+
+The setup goes through the node's name; its radio (a region preset, or frequency, bandwidth, spreading factor, coding rate, hop hash size and transmit power by hand); its position and whether adverts share it; whether contacts are added automatically; #hashtag channels to join; and the Bluetooth PIN. A review page lists exactly what will change, and only what you changed is sent. Each step is ticked off as the node confirms it, a failed step says why and the rest still go through. At the end the app sends a flood advert so the mesh hears about the node, and restarts the node if the PIN changed.
+
+Region presets: The radio page has the MeshCore community's suggested settings for USA, Canada, EU/UK, Australia, New Zealand and other regions. Picking one fills in the radio settings; editing a value by hand switches it to Custom.
+
+Position map: Click the map where the node is to place it, and drag the pin to adjust. Typing coordinates still works and moves the pin. The map opens on the node's current position, on the nodes it has heard, or where you placed the last node.
+
+Try it without a radio with --sim-fresh, a simulated node that has just been flashed.

@@ -281,6 +281,12 @@ class Session:
             await self.request(P.get_contact(key), {"contact"})
         return f
 
+    async def reboot(self):
+        """The node restarts straight away and never answers. The link drops
+        and the usual reconnect picks it up again."""
+        async with self._lock:
+            await self.t.write(P.reboot())
+
     async def set_channel(self, idx: int, name: str, secret: bytes):
         f = await self.request(P.set_channel(idx, name, secret), {"ok"})
         await self.request(P.get_channel(idx), {"channel_info"})

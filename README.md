@@ -2,7 +2,7 @@
 
 A desktop chat app for a MeshCore node running companion firmware, over Bluetooth LE and newly added USB node support
 
-> **v1.0.** All features have been tested on Linux ( Fedora build ) and work. Windows builds are tested by KA1CM and working as of the current build
+> **v1.1.** All features have been tested on Linux ( Fedora build ) and work. Windows builds are tested by KA1CM and working as of the current build
 
 ![MeshCore Desktop messages](docs/messages.png)
 
@@ -36,8 +36,33 @@ A desktop chat app for a MeshCore node running companion firmware, over Bluetoot
 - Sends zero-hop or flood adverts; sets the node's clock from the PC if it's behind
 - Messages saved per node (~/.local/share/meshcore-desktop on Linux, %LOCALAPPDATA%\MeshCore Desktop on
   Windows, or a `data` folder beside the packaged app); reconnects when the link drops
+- Node setup: a newly flashed node is spotted on connect and a wizard sets its name, region preset, position (click it on a map), channels and Bluetooth PIN
 - Connects over Bluetooth LE or USB serial; plugged-in nodes show up in the connect list by themselves
 - Runs on Linux (BlueZ) and Windows 10 1809+ (WinRT); Bluetooth pairing asks for the node's PIN in the app on both
+
+## Node setup
+
+Connect a newly flashed node and the app notices it still has its factory name (the first 8 hex digits of its key) and
+offers to set it up. You can also run the setup any time from **⋯ → Set up node…**.
+
+![A newly flashed node is offered setup](docs/setup-prompt.png)
+
+| **Radio: pick your region** | **Position: click the map** |
+|---|---|
+| ![Radio settings](docs/setup-radio.png) | ![Position map](docs/setup-map.png) |
+| **Review before anything is sent** | **Each step ticked off** |
+| ![Review](docs/setup-review.png) | ![Done](docs/setup-done.png) |
+
+- **Name**: what others see in adverts and channel messages
+- **Radio**: the community's regional presets (USA, Canada, EU/UK, Australia, New Zealand and more) fill in frequency,
+  bandwidth, spreading factor, coding rate and hop hash size; or set them by hand. Transmit power up to the board's limit
+- **Position**: click the map where the node is and drag the pin to adjust, or type coordinates; choose whether
+  adverts share it. Also whether contacts are added automatically
+- **Channels and Bluetooth**: join `#hashtag` channels, and keep the default PIN or set a fixed one
+- **Review**: only what you changed is sent. Then a flood advert so the mesh hears about the node, and a restart if
+  the PIN changed
+
+Try it without a radio with `--sim-fresh`, a simulated node that has just been flashed.
 
 ## Live traffic
 
@@ -114,6 +139,7 @@ py -m venv .venv
 ```
 ./meshcore-desktop            # pick a node from the scan
 ./meshcore-desktop --sim      # a simulated node, no radio needed
+./meshcore-desktop --sim-fresh   # a simulated, newly flashed node, to try node setup
 ./meshcore-desktop --address AA:BB:CC:DD:EE:FF
 ./meshcore-desktop --port /dev/ttyACM0     # a node on USB (COM3 and so on on Windows)
 .venv/bin/python -m pytest tests
