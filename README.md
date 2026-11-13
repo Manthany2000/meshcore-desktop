@@ -22,6 +22,7 @@ A desktop chat app for a MeshCore node running companion firmware, over Bluetoot
 - In a DM, the header shows the route to the contact. Click their name for its menu, or press **Flood** to forget the stored path so the next message floods the mesh and their reply sets a fresh one. Tick **Always flood messages** in their menu to flood every message to them
 - Contacts: type and last heard, click one for its hops and route; reset route; message from the list
 - Add `#hashtag` or private channels, remove channels
+- Flood scopes (regions): give a channel its own scope (right-click it in Chats) and set the node's default scope (⋯ → Default flood scope), so messages stay inside an area whose repeaters allow that region
 - Map with type icons, clustering, live packet paths, and full details on hover or click
 - Messages, map, repeater and dashboard as tiled panels: open several at once, close each individually, and drag a title onto another panel to swap them
 - Live traffic: every packet your connected node receives, as it arrives, on the Dashboard
@@ -58,7 +59,7 @@ offers to set it up. You can also run the setup any time from **⋯ → Set up n
   bandwidth, spreading factor, coding rate and hop hash size; or set them by hand. Transmit power up to the board's limit
 - **Position**: click the map where the node is and drag the pin to adjust, or type coordinates; choose whether
   adverts share it. Also whether contacts are added automatically
-- **Channels and Bluetooth**: join `#hashtag` channels, and keep the default PIN or set a fixed one
+- **Channels and Bluetooth**: join `#hashtag` channels, set the node's flood scope (region), and keep the default PIN or set a fixed one
 - **Review**: only what you changed is sent. Then a flood advert so the mesh hears about the node, and a restart if
   the PIN changed
 
@@ -171,7 +172,7 @@ were queued on the node while nothing was connected have neither.
 
 In Contacts, right-click a repeater and choose **Manage repeater** to open the Repeater tab. Log in with its admin
 password to read its stats and run CLI commands; the guest password gets stats only. Once you're on its admin list, a
-blank password logs you back in. Zero-hop and Flood advert buttons make the repeater announce itself. The Settings page edits name, repeating, TX power, flood and advert limits, location and owner info: read the current values, change them, and Apply. The Live page polls a repeater you're admin on for packet rates, airtime, noise and neighbours, and lists the packets your node heard it relay; a repeater can't stream its full traffic over the mesh. Passwords are never saved or logged. Commands that could cut you off from a remote
+blank password logs you back in. Zero-hop and Flood advert buttons make the repeater announce itself. The Settings page edits name, repeating, TX power, flood and advert limits (including max hops for unscoped floods), location and owner info: read the current values, change them, and Apply. The Regions page shows the repeater's region tree, home region and default scope; add or remove regions, allow or deny floods for each, set the home region and default scope, and Save so they last past a restart. The Live page polls a repeater you're admin on for packet rates, airtime, noise and neighbours, and lists the packets your node heard it relay; a repeater can't stream its full traffic over the mesh. Passwords are never saved or logged. Commands that could cut you off from a remote
 repeater, such as `reboot` or `password`, ask first. In the simulator the passwords are `admin` and `guest`, and
 Library Roof never answers.
 

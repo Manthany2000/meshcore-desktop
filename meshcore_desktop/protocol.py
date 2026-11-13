@@ -3,6 +3,8 @@ first byte is the code. Layouts from examples/companion_radio/MyMesh.cpp
 (firmware protocol v14), ported from the CYD MeshCore app's decoder."""
 from __future__ import annotations
 
+import hashlib
+import re
 import struct
 from dataclasses import dataclass, field
 
@@ -41,7 +43,10 @@ CMD_GET_CHANNEL = 31
 CMD_SET_CHANNEL = 32
 CMD_SET_DEVICE_PIN = 37
 CMD_SET_OTHER_PARAMS = 38
+CMD_SET_FLOOD_SCOPE = 54  # v8+; the 'unscoped' form v12+
 CMD_SET_PATH_HASH_MODE = 61
+CMD_SET_DEFAULT_FLOOD_SCOPE = 63
+CMD_GET_DEFAULT_FLOOD_SCOPE = 64
 
 # Replies and pushes, node to app.
 RESP_OK = 0
@@ -67,6 +72,7 @@ PUSH_MSG_WAITING = 0x83
 PUSH_LOGIN_SUCCESS = 0x85
 PUSH_LOGIN_FAIL = 0x86
 PUSH_STATUS_RESPONSE = 0x87
+RESP_DEFAULT_FLOOD_SCOPE = 28
 PUSH_LOG_RX = 0x88
 PUSH_NEW_ADVERT = 0x8A
 
@@ -308,6 +314,11 @@ def decode(b: bytes) -> Frame | None:
             return None
         secret = bytes(b[34:50]) if n >= 50 else b""
         return F("channel_info", idx=b[1], name=_cstr(b[2:34]), secret=secret if any(secret) else b"")
+    if c == RESP_DEFAULT_FLOOD_SCOPE:
+        # code, name[31], key[16]; just the code when the node has none.
+        if n >= 1 + 31 + 16:
+            return F("default_scope", name=_cstr(b[1:32]), key=bytes(b[32:48]))
+        return F("default_scope", name="", key=b"")
     if c == RESP_SENT:
         return F("sent", flood=bool(b[1]), ack=_u32(b, 2), timeout_ms=_u32(b, 6)) if n >= 10 else None
     if c == PUSH_SEND_CONFIRMED:
@@ -416,6 +427,87 @@ def set_other_params(manual_add: int, telemetry: int, loc_policy: int, multi_ack
 def set_path_hash_mode(mode: int) -> bytes:
     """Hash bytes per hop in the floods we send, minus one (0-2)."""
     return bytes([CMD_SET_PATH_HASH_MODE, 0, mode])
+
+
+# --- flood scopes (regions) ---------------------------------------------------
+#
+# A scoped flood carries a code made from the region's key, and repeaters only
+# relay it if they allow that region. A region's key is sha256("#name")[:16],
+# whether or not the name was written with its '#'.
+
+SCOPE_NAME_MAX = 30  # char name[31] in the firmware
+
+
+def region_name(name: str) -> str:
+    """How the repeaters show it: without the '#'."""
+    return name.strip().lstrip("#")
+
+
+def region_problem(name: str) -> str | None:
+    """Why the firmware wouldn't take this region name, or None."""
+    n = region_name(name)
+    if not n:
+        return "Enter a region name."
+    if len(n.encode()) > SCOPE_NAME_MAX - 1:
+        return f"Region names can be at most {SCOPE_NAME_MAX - 1} bytes."
+    # RegionMap::is_name_char: letters, digits, accented letters, '-' and '$'.
+    bad = sorted({ch for ch in n if not (ch in "-$" or ch.isdigit() or ord(ch) >= ord("A"))})
+    if bad:
+        return "Region names can't have " + " ".join(repr(ch) for ch in bad) + "."
+    return None
+
+
+def region_key(name: str) -> bytes:
+    return hashlib.sha256(("#" + region_name(name)).encode()).digest()[:16]
+
+
+def set_flood_scope(name: str | None) -> bytes:
+    """The scope the node puts on floods it sends from now on, until it restarts.
+    A name scopes to that region; "" goes back to the node's default scope; None
+    sends them with no scope at all (protocol v12+)."""
+    if name is None:
+        return bytes([CMD_SET_FLOOD_SCOPE, 1])
+    if not region_name(name):
+        return bytes([CMD_SET_FLOOD_SCOPE, 0])
+    return bytes([CMD_SET_FLOOD_SCOPE, 0]) + region_key(name)
+
+
+def set_default_scope(name: str) -> bytes:
+    """Saved on the node; "" clears it."""
+    n = region_name(name)
+    if not n:
+        return bytes([CMD_SET_DEFAULT_FLOOD_SCOPE])
+    return bytes([CMD_SET_DEFAULT_FLOOD_SCOPE]) + n.encode()[:SCOPE_NAME_MAX].ljust(31, b"\0") + region_key(n)
+
+
+@dataclass
+class Region:
+    """One line of a repeater's `region` reply."""
+    name: str
+    depth: int
+    flood: bool  # relays floods scoped to it ('*': floods with no scope)
+    home: bool
+    parent: str | None
+
+
+def parse_regions(text: str) -> list[Region]:
+    """The tree a repeater prints for `region` (and `region def`): one region a
+    line, indented a space per level under its parent, '^' after the home region
+    and ' F' when floods are allowed. '*' is the root."""
+    out: list[Region] = []
+    stack: list[str] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        depth = len(line) - len(line.lstrip(" "))
+        m = re.fullmatch(r"(\S+?)(\^?)( F)?", line.strip())
+        if not m:
+            continue
+        name = m.group(1)
+        stack = stack[:depth]
+        out.append(Region(name, depth, bool(m.group(3)), bool(m.group(2)), stack[-1] if stack else None))
+        stack.append(name)
+    return out if out and out[0].name == "*" else []  # anything else isn't a region tree
 
 
 def reboot() -> bytes:

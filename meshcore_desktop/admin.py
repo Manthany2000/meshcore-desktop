@@ -10,8 +10,9 @@ from dataclasses import dataclass, field
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QFontDatabase
-from PySide6.QtWidgets import (QBoxLayout, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
-                               QPlainTextEdit, QPushButton, QScrollArea, QTabWidget, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QBoxLayout, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QFrame, QGridLayout,
+                               QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox, QPlainTextEdit, QPushButton,
+                               QScrollArea, QTabWidget, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from . import protocol as P
 from . import theme
@@ -30,8 +31,9 @@ SECRET = ("password ", "set guest.password ", "set prv.key ")
 
 READ_PRESETS = ["ver", "board", "clock", "neighbors", "powersaving", "get name", "get role", "get radio", "get tx",
                 "get repeat", "get advert.interval", "get flood.advert.interval", "get flood.max",
-                "get lat", "get lon", "get owner.info"]
-ACTION_PRESETS = ["clock sync", "advert", "advert.zerohop", "clear stats", "reboot"]
+                "get lat", "get lon", "get owner.info", "get flood.max.unscoped", "region", "region home",
+                "region default"]
+ACTION_PRESETS = ["clock sync", "advert", "advert.zerohop", "region save", "clear stats", "reboot"]
 
 STAT_ROWS = [("Battery", "batt"), ("Uptime", "up"), ("Noise floor", "noise"), ("Last RSSI / SNR", "signal"),
              ("TX queue", "queue"), ("Airtime TX / RX", "air"), ("Packets RX / TX", "packets"),
@@ -70,6 +72,8 @@ SETTINGS = [
     Setting("repeat", "Repeating", "Off stops this repeater relaying packets", choices=("on", "off")),
     Setting("tx", "TX power (dBm)", "Stay within your radio's and your region's limits", -9, 30),
     Setting("flood.max", "Max flood hops", "Floods that have gone further aren't relayed", 0, 64),
+    Setting("flood.max.unscoped", "Max hops, unscoped", "The same for floods with no region scope. "
+            "A low value like 3 keeps others' unscoped chatter local (firmware 1.10+)", 0, 64),
     Setting("advert.interval", "Local advert (min)", "0 = off. Otherwise even minutes, up to 240", 0, 240),
     Setting("flood.advert.interval", "Flood advert (hours)", "0 = off, or 3 to 168", 0, 168),
     Setting("lat", "Latitude", "Decimal degrees", -90, 90, whole=False),
@@ -118,6 +122,9 @@ class Remote:
     settings: dict[str, str] = field(default_factory=dict)  # as last read from the repeater
     pct: int | None = None  # battery, from the latest status
     console: str = ""
+    regions: list[P.Region] | None = None  # as last read; None: not read yet
+    region_default: str | None = None  # its default scope, "" for none
+    regions_unsaved: bool = False  # changed since the last `region save`
 
 
 class HistoryLine(QLineEdit):
@@ -249,6 +256,7 @@ class RepeaterPanel(QWidget):
         self.inner.addTab(self._scrolling(status_page), "Status")
         self.inner.addTab(console_page, "Console")
         self.inner.addTab(self._scrolling(self._settings_page()), "Settings")
+        self.inner.addTab(self._scrolling(self._regions_page()), "Regions")
         self.inner.addTab(self._history_page(), "History")
         self.live = LivePage(self)
         self.inner.addTab(self.live, "Live")
@@ -301,6 +309,50 @@ class RepeaterPanel(QWidget):
         row.addWidget(self.note, 1)
         row.addWidget(self.read_btn)
         row.addWidget(self.apply_btn)
+        return page
+
+    def _regions_page(self) -> QWidget:
+        page = QWidget()
+        v = QVBoxLayout(page)
+        intro = QLabel("Regions decide which scoped floods this repeater relays: one scoped to a region it allows floods "
+                       "for goes on, others stop here. <b>*</b> is floods with no scope. Changes work straight away but "
+                       "are lost on a restart until you save them.", objectName="dim", wordWrap=True)
+        v.addWidget(intro)
+        self.region_tree = QTreeWidget()
+        self.region_tree.setHeaderLabels(["Region", "Floods", ""])
+        self.region_tree.setRootIsDecorated(True)
+        self.region_tree.itemSelectionChanged.connect(self._sync)
+        self.region_tree.setMinimumHeight(170)
+        v.addWidget(self.region_tree, 1)
+        self.region_info = QLabel("", objectName="dim", wordWrap=True)
+        v.addWidget(self.region_info)
+        row = QHBoxLayout()
+        self.region_read_btn = QPushButton("Read")
+        self.region_read_btn.setToolTip("Read the region list and default scope from the repeater")
+        self.region_read_btn.clicked.connect(self.read_regions)
+        self.region_add_btn = QPushButton("Add…")
+        self.region_add_btn.clicked.connect(self.add_region)
+        self.region_flood_btn = QPushButton("Deny floods")
+        self.region_flood_btn.clicked.connect(self.toggle_region_flood)
+        self.region_more = QToolButton(text="More ▾", objectName="plain")
+        self.region_more.setPopupMode(QToolButton.InstantPopup)
+        rm = QMenu(self.region_more)
+        self.region_home_act = rm.addAction("Make it the home region", lambda: self._region_cmd("home"))
+        self.region_def_act = rm.addAction("Make it the default scope", lambda: self._region_cmd("default"))
+        self.region_nodef_act = rm.addAction("Clear the default scope", self.clear_region_default)
+        rm.addSeparator()
+        self.region_rm_act = rm.addAction("Remove region", self.remove_region)
+        self.region_more.setMenu(rm)
+        self.region_save_btn = QPushButton("Save", objectName="primary")
+        self.region_save_btn.setToolTip("region save: keep the regions after a restart")
+        self.region_save_btn.clicked.connect(self.save_regions)
+        for b in (self.region_read_btn, self.region_add_btn, self.region_flood_btn, self.region_more):
+            row.addWidget(b)
+        row.addStretch(1)
+        row.addWidget(self.region_save_btn)
+        v.addLayout(row)
+        self.region_note = QLabel("Read the regions first.", objectName="dim", wordWrap=True)
+        v.addWidget(self.region_note)
         return page
 
     def fit_width(self, w: int):
@@ -367,6 +419,19 @@ class RepeaterPanel(QWidget):
         self.live.set_usable(self.link_ready and r is not None and r.logged_in and r.is_admin is not False)
         for key, w in self.fields.items():
             w.setEnabled(cli and key in r.settings)
+        sel = self._region_selected()
+        have = cli and r.regions is not None
+        self.region_read_btn.setEnabled(cli)
+        self.region_add_btn.setEnabled(have)
+        self.region_flood_btn.setEnabled(have and sel is not None)
+        if sel is not None:
+            self.region_flood_btn.setText("Deny floods" if sel.flood else "Allow floods")
+        self.region_more.setEnabled(have)
+        self.region_home_act.setEnabled(sel is not None and sel.name != "*" and not sel.home)
+        self.region_def_act.setEnabled(sel is not None and sel.name != "*" and sel.name != (r.region_default if r else None))
+        self.region_nodef_act.setEnabled(bool(r and r.region_default))
+        self.region_rm_act.setEnabled(sel is not None and sel.name != "*")
+        self.region_save_btn.setEnabled(have)
 
     def _showing(self, c: P.Contact) -> bool:
         return self.contact is not None and self.contact.prefix == c.prefix
@@ -395,6 +460,7 @@ class RepeaterPanel(QWidget):
             label.setText(r.stats.get(key, "—"))
         for s in SETTINGS:
             self._fill(s)
+        self._fill_regions()
         self.gauge.set_percent(r.pct)
         self._load_history(c)
         self._login_state()
@@ -662,3 +728,177 @@ class RepeaterPanel(QWidget):
                 self._report_note(c, f"{s.label} was set, but reading it back got no reply.", True)
                 return
         self._report_note(c, "  ".join(refused) if refused else "Applied.", bool(refused))
+
+    # --- regions ---------------------------------------------------------------
+
+    def _region_selected(self) -> P.Region | None:
+        it = self.region_tree.currentItem() if self.region_tree.selectedItems() else None
+        return it.data(0, Qt.UserRole) if it else None
+
+    def _fill_regions(self):
+        r = self.remote
+        keep = self._region_selected()
+        self.region_tree.clear()
+        if r is None or r.regions is None:
+            self.region_info.setText("")
+            return
+        items: dict[str, QTreeWidgetItem] = {}
+        for reg in r.regions:
+            marks = []
+            if reg.home:
+                marks.append("home")
+            if reg.name == r.region_default:
+                marks.append("default scope")
+            label = "* (no scope)" if reg.name == "*" else reg.name
+            it = QTreeWidgetItem([label, "allowed" if reg.flood else "denied", ", ".join(marks)])
+            it.setData(0, Qt.UserRole, reg)
+            if not reg.flood:
+                it.setForeground(1, self.palette().placeholderText())
+            parent = items.get(reg.parent) if reg.parent else None
+            (parent.addChild(it) if parent else self.region_tree.addTopLevelItem(it))
+            items[reg.name] = it
+            if keep and keep.name == reg.name:
+                self.region_tree.setCurrentItem(it)
+        self.region_tree.expandAll()
+        self.region_tree.resizeColumnToContents(0)
+        home = next((x.name for x in r.regions if x.home), None)
+        self.region_info.setText(f"Home region: {home or 'none'} · Default scope: "
+                                 f"{r.region_default or 'none'}" + ("  ·  <b>unsaved changes</b>" if r.regions_unsaved else ""))
+        self.region_info.setTextFormat(Qt.RichText)
+
+    def _region_note(self, c: P.Contact, text: str, bad: bool = False):
+        if self._showing(c):
+            self.region_note.setStyleSheet(f"color:{theme.current.danger}" if bad else "")
+            self.region_note.setText(text)
+
+    async def _region_run(self, c: P.Contact, cmd: str) -> str | None:
+        """Runs a region command, logged in the console. Its reply, or None."""
+        self._log(c, f"> {cmd}")
+        f = await self.win.session.cli(c.key, cmd)
+        if f is None or f.kind != "message":
+            self._log(c, "(no reply)" if f is None else f"(failed: {self._failure(f)})")
+            self._region_note(c, f"No reply to “{cmd}”. {self._failure(f)}", True)
+            return None
+        self._log(c, f.msg.text)
+        return f.msg.text
+
+    async def _read_regions(self, c: P.Contact) -> bool:
+        self._region_note(c, "Reading regions…")
+        tree = await self._region_run(c, "region")
+        if tree is None:
+            return False
+        regions = P.parse_regions(tree)
+        if not regions:
+            self._region_note(c, f"This repeater didn't list any regions (it said “{tree[:60]}”). "
+                              "It may need firmware 1.10 or later.", True)
+            return False
+        d = await self._region_run(c, "region default")
+        r = self.remotes.setdefault(c.prefix, Remote())
+        r.regions = regions
+        if d is not None and "default scope is" in d:
+            name = d.rsplit(" ", 1)[-1].strip()
+            r.region_default = "" if name == "<null>" else name.lstrip("#")
+        if self._showing(c):
+            self._fill_regions()
+        full = len(tree) < 150  # replies stop at 160 bytes
+        self._region_note(c, "Up to date." if full else
+                          "Up to date, but the list may be cut short: replies hold 160 characters. "
+                          "Use the console's region get <name> for the rest.")
+        return True
+
+    def read_regions(self):
+        self._task(self._read_regions(self.contact))
+
+    async def _change_regions(self, c: P.Contact, cmd: str, done: str):
+        reply = await self._region_run(c, cmd)
+        if reply is None:
+            return
+        bad = reply.startswith("Err")
+        if not bad:
+            self.remotes.setdefault(c.prefix, Remote()).regions_unsaved = True
+        if await self._read_regions(c):
+            self._region_note(c, f"The repeater said: {reply}" if bad else done + " Save to keep it after a restart.", bad)
+
+    def add_region(self):
+        r, sel = self.remote, self._region_selected()
+        d = QDialog(self)
+        d.setWindowTitle("Add region")
+        f = QFormLayout(d)
+        name = QLineEdit()
+        name.setPlaceholderText("e.g. boston")
+        name.setMaxLength(P.SCOPE_NAME_MAX - 1)
+        parent = QComboBox()
+        for reg in r.regions or []:
+            parent.addItem("* (top level)" if reg.name == "*" else reg.name, reg.name)
+        if sel:
+            parent.setCurrentIndex(max(parent.findData(sel.name), 0))
+        err = QLabel("", wordWrap=True)
+        err.setStyleSheet(f"color:{theme.current.danger}")
+        f.addRow("Name", name)
+        f.addRow("Inside", parent)
+        f.addRow(QLabel("Floods scoped to it are allowed. A region inside another counts as part of it.",
+                        objectName="dim", wordWrap=True))
+        f.addRow(err)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        f.addRow(bb)
+        bb.rejected.connect(d.reject)
+
+        def ok():
+            if problem := P.region_problem(name.text()):
+                err.setText(problem)
+                return
+            if any(x.name == P.region_name(name.text()) for x in r.regions or []):
+                err.setText("It already has that region.")
+                return
+            d.accept()
+        bb.accepted.connect(ok)
+        if d.exec():
+            n, p = P.region_name(name.text()), parent.currentData()
+            cmd = f"region put {n}" + (f" {p}" if p and p != "*" else "")
+            self._task(self._change_regions(self.contact, cmd, f"Added {n}."))
+
+    def toggle_region_flood(self):
+        sel = self._region_selected()
+        if sel is None:
+            return
+        if sel.flood and sel.name == "*" and QMessageBox.question(
+                self, "Deny unscoped floods?",
+                f"Stop {self.contact.name} relaying floods that have no scope? Most nodes send those today, so "
+                "this cuts off anyone who hasn't set a scope. (Max hops, unscoped in Settings is a gentler way.)"
+        ) != QMessageBox.Yes:
+            return
+        op = "denyf" if sel.flood else "allowf"
+        self._task(self._change_regions(self.contact, f"region {op} {sel.name}",
+                                        f"{'Denied' if sel.flood else 'Allowed'} floods for {sel.name}."))
+
+    def _region_cmd(self, what: str):
+        sel = self._region_selected()
+        if sel is None:
+            return
+        done = f"{sel.name} is now the home region." if what == "home" else f"{sel.name} is now the default scope."
+        self._task(self._change_regions(self.contact, f"region {what} {sel.name}", done))
+
+    def clear_region_default(self):
+        self._task(self._change_regions(self.contact, "region default <null>", "Cleared the default scope."))
+
+    def remove_region(self):
+        sel = self._region_selected()
+        if sel is None:
+            return
+        if QMessageBox.question(self, "Remove region", f"Remove {sel.name} from {self.contact.name}?") != QMessageBox.Yes:
+            return
+        self._task(self._change_regions(self.contact, f"region remove {sel.name}", f"Removed {sel.name}."))
+
+    def save_regions(self):
+        self._task(self._save_regions(self.contact))
+
+    async def _save_regions(self, c: P.Contact):
+        reply = await self._region_run(c, "region save")
+        if reply is None:
+            return
+        ok = reply.startswith("OK")
+        if ok:
+            self.remotes.setdefault(c.prefix, Remote()).regions_unsaved = False
+            if self._showing(c):
+                self._fill_regions()
+        self._region_note(c, "Saved on the repeater." if ok else f"The repeater said: {reply}", not ok)

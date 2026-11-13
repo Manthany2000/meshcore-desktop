@@ -283,6 +283,17 @@ class SetupWizard(QDialog):
         v.addLayout(f)
         v.addWidget(_note("A #channel's key comes from its name, so everyone who joins the same name talks together. "
                           "Private channels: + beside Chats once you're set up."))
+        self.scope = QLineEdit(self.session.model.default_scope or "")
+        self.scope.setPlaceholderText("none: floods go everywhere")
+        self.scope.setMaxLength(P.SCOPE_NAME_MAX - 1)
+        self.scope_err = _err()
+        if self.session.scopes and self.session.model.default_scope is not None:
+            f2 = QFormLayout()
+            f2.addRow("Flood scope (region)", self.scope)
+            v.addLayout(f2)
+            v.addWidget(_note("If your mesh's repeaters use regions, the one this node's floods stay in, like ‘usa’ "
+                              "or ‘boston’. Channels can have their own: right-click one in Chats."))
+            v.addWidget(self.scope_err)
         v.addSpacing(10)
         v.addWidget(QLabel("Bluetooth PIN"))
         self.pin_default = QRadioButton("Firmware default: a new random PIN on the node's screen, or 123456 without one")
@@ -430,6 +441,10 @@ class SetupWizard(QDialog):
             p.share_location = self.share.isChecked()
         if self.auto_add.isChecked() != (not (si.manual_add & 1)):
             p.auto_add = self.auto_add.isChecked()
+        cur_scope = self.session.model.default_scope
+        new_scope = P.region_name(self.scope.text())
+        if cur_scope is not None and new_scope != cur_scope and not P.region_problem(new_scope or "x"):
+            p.default_scope = new_scope
         have = {c.name.lower() for c in self.session.model.channels.values()}
         p.channels = [(t, S.hashtag_secret(t)) for t in S.parse_hashtags(self.tags.text()) if t not in have]
         _ok, pin = self._pin()
@@ -490,6 +505,12 @@ class SetupWizard(QDialog):
         if i == 3 and not self._pin()[0]:
             self.pin.setFocus()
             return
+        if i == 3 and self.scope.text().strip() and (problem := P.region_problem(self.scope.text())):
+            self.scope_err.setText(problem)
+            self.scope.setFocus()
+            return
+        if i == 3:
+            self.scope_err.setText("")
         if i == self.pages.count() - 2:
             asyncio.ensure_future(self._apply())
             return

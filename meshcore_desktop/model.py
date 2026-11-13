@@ -14,6 +14,7 @@ from . import protocol as P
 
 CLOCK_SANE = 1_700_000_000  # late 2023: a node never told the time reads less
 COPY_CLAIM_S = 30  # how old a logged packet can be and still belong to a new message
+NO_SCOPE = "*"  # a channel's scope: floods with no region at all
 REPEAT_WINDOW_S = 120  # how long a flood can still be going round
 
 from .desktop import data_dir
@@ -107,6 +108,10 @@ class Model:
         self.found_away: list[P.Contact] = []  # in the node's contact list but new to us
         self.last_snr: dict[bytes, float] = {}  # prefix -> SNR of its latest message
         self.flood_always: set[bytes] = set()  # contact prefixes whose DMs always flood
+        # Channel slot -> (channel name, scope): "" the node's default, NO_SCOPE, or a region.
+        # Kept here because the node has no per-channel scope; it applies while the name matches.
+        self.channel_scopes: dict[int, tuple[str, str]] = {}
+        self.default_scope: str | None = None  # the node's, "" for none; None: not known
 
     # --- plumbing -----------------------------------------------------------
 
@@ -130,6 +135,7 @@ class Model:
             CREATE TABLE IF NOT EXISTS contacts (key TEXT PRIMARY KEY, name TEXT, type INT);
             CREATE TABLE IF NOT EXISTS reads (conv TEXT PRIMARY KEY, at REAL);
             CREATE TABLE IF NOT EXISTS flood_always (prefix TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS channel_scopes (idx INTEGER PRIMARY KEY, name TEXT, scope TEXT);
             CREATE TABLE IF NOT EXISTS repeater_stats (prefix TEXT, at REAL, batt_mv INT, noise_floor INT, last_rssi INT);
             CREATE INDEX IF NOT EXISTS repeater_stats_key ON repeater_stats(prefix, at);
         """)
@@ -154,6 +160,7 @@ class Model:
         self.found_away = []
         self.last_read = dict(self.db.execute("SELECT conv, at FROM reads"))
         self.flood_always = {bytes.fromhex(k) for k, in self.db.execute("SELECT prefix FROM flood_always")}
+        self.channel_scopes = {i: (n, sc) for i, n, sc in self.db.execute("SELECT * FROM channel_scopes")}
         self.emit("reload")
 
     def take_found_away(self) -> list:
@@ -214,6 +221,30 @@ class Model:
 
     def always_floods(self, prefix: bytes) -> bool:
         return prefix[:P.KEY_PREFIX] in self.flood_always
+
+    def channel_scope(self, idx: int) -> str:
+        """The scope messages on this channel go out with: "" for the node's
+        default, NO_SCOPE for none, or a region name."""
+        ch = self.channels.get(idx)
+        saved = self.channel_scopes.get(idx)
+        return saved[1] if ch and saved and saved[0] == ch.name else ""
+
+    def set_channel_scope(self, idx: int, scope: str):
+        ch = self.channels.get(idx)
+        if not ch:
+            return
+        scope = scope if scope == NO_SCOPE else P.region_name(scope)
+        if scope:
+            self.channel_scopes[idx] = (ch.name, scope)
+        else:
+            self.channel_scopes.pop(idx, None)
+        if self.db:
+            if scope:
+                self.db.execute("INSERT OR REPLACE INTO channel_scopes VALUES (?,?,?)", (idx, ch.name, scope))
+            else:
+                self.db.execute("DELETE FROM channel_scopes WHERE idx = ?", (idx,))
+            self.db.commit()
+        self.emit("channels")
 
     def set_always_flood(self, prefix: bytes, on: bool):
         """Marks a contact so every DM to them floods instead of using a stored path."""
@@ -392,6 +423,9 @@ class Model:
             else:
                 self.channels.pop(f.idx, None)
             self.emit("channels")
+        elif k == "default_scope":
+            self.default_scope = f.name
+            self.emit("default_scope")
         elif k == "log_rx":
             self._on_raw(f.raw)
         elif k == "confirmed":

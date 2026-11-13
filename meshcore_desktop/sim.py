@@ -36,6 +36,84 @@ CHATTER = ["anyone on tonight?", "test from the car", "good copy here, 3 hops", 
            "new repeater up on the ridge", "weather's turning, signal is great", "ping", "73 all"]
 
 
+class SimRegions:
+    """A repeater's region map, answering `region ...` as CommonCLI does."""
+
+    def __init__(self):
+        # name -> [parent, floods allowed]; '*' is the root.
+        self.r: dict[str, list] = {"*": [None, True], "usa": ["*", True], "ma": ["usa", True], "boston": ["ma", True]}
+        self.home, self.default = "ma", None
+
+    def _find(self, prefix: str) -> str | None:
+        prefix = prefix.lstrip("#")
+        return prefix if prefix in self.r else next((n for n in self.r if n.startswith(prefix)), None)
+
+    def tree(self) -> str:
+        lines = []
+
+        def walk(name, depth):
+            lines.append(" " * depth + name + ("^" if name == self.home else "") + (" F" if self.r[name][1] else ""))
+            for n, (parent, _f) in self.r.items():
+                if parent == name:
+                    walk(n, depth + 1)
+        walk("*", 0)
+        return "\n".join(lines)[:159]
+
+    def command(self, cmd: str) -> str:
+        p = cmd.split()
+        if len(p) == 1:
+            return self.tree()
+        op, arg = p[1], p[2] if len(p) > 2 else None
+        if op == "save":
+            return "OK"
+        if op in ("allowf", "denyf") and arg:
+            n = self._find(arg)
+            if not n:
+                return "Err - unknown region"
+            self.r[n][1] = op == "allowf"
+            return "OK"
+        if op == "home":
+            if not arg:
+                return f" home is {self.home or '*'}"
+            n = self._find(arg)
+            if not n:
+                return "Err - unknown region"
+            self.home = n
+            return f" home is now {n}"
+        if op == "default":
+            if not arg:
+                return f" default scope is {self.default or '<null>'}"
+            if arg == "<null>":
+                self.default = None
+                return " default scope is now <null>"
+            n = self._find(arg) or arg.lstrip("#")
+            self.r.setdefault(n, ["*", True])[1] = True
+            self.default = n
+            return f" default scope is now {n}"
+        if op == "put" and arg:
+            parent = self._find(p[3]) if len(p) > 3 else "*"
+            if not parent:
+                return "Err - unknown parent"
+            if P.region_problem(arg):
+                return "Err - unable to put"
+            n = arg.lstrip("#")
+            self.r[n] = [parent, True]
+            return "OK - (flood allowed)"
+        if op == "remove" and arg:
+            n = arg.lstrip("#")
+            if n not in self.r or n == "*":
+                return "Err - not found"
+            if any(v[0] == n for v in self.r.values()):
+                return "Err - not empty"
+            del self.r[n]
+            self.home = None if self.home == n else self.home
+            return "OK"
+        if op == "get" and arg:
+            n = self._find(arg)
+            return f" {n} {'F' if self.r[n][1] else ''}" if n else "Err - unknown region"
+        return "Err - ??"
+
+
 class SimTransport:
     def __init__(self, visitor: bool = False, fresh: bool = False):
         self.visitor = visitor  # a different unknown node in the list each run, as if heard while the app was closed
@@ -49,6 +127,9 @@ class SimTransport:
         self.lat, self.lon = 42356000, -71100000
         self.multi_acks, self.loc_policy, self.telemetry, self.manual_add = 0, 0, 0, 0
         self.pin, self.path_hash_mode = 0, 0
+        self.send_scope: bytes | None = b""  # the scope override: b"" none, a key, or None for unscoped
+        self.default_scope = ("", b"")  # name, key: saved on the node
+        self.sent_scopes: list = []  # the scope each channel message went out with, for the tests
         self.reboots = 0
         self.clock = int(time.time()) - 3600  # a bit behind, so the app sets it
         self.queue: list[bytes] = []
@@ -61,6 +142,7 @@ class SimTransport:
         self.task = None
         self.admins: set[bytes] = set()  # repeaters that have us on their admin list
         self.repeater_cfg: dict[bytes, dict] = {}
+        self.regions: dict[bytes, SimRegions] = {}
         now = int(time.time())
         # Queued while no app was connected: the old frame format.
         self.queue.append(self._chan_msg(0, "alice", "morning all", now - 1800, v3=False))
@@ -202,9 +284,12 @@ class SimTransport:
             return  # a real repeater ignores commands from anyone but an admin
         cfg = self.repeater_cfg.setdefault(prefix, {
             "name": self._repeater(prefix)[0], "repeat": "on", "tx": "22", "advert.interval": "120",
-            "flood.advert.interval": "12", "flood.max": "64", "lat": "42.36", "lon": "-71.2", "owner.info": ""})
+            "flood.advert.interval": "12", "flood.max": "64", "flood.max.unscoped": "64",
+            "lat": "42.36", "lon": "-71.2", "owner.info": ""})
         parts = cmd.split(" ", 2)
-        if parts[0] == "get" and len(parts) == 2 and parts[1] in cfg:
+        if parts[0] == "region":
+            reply = self.regions.setdefault(prefix, SimRegions()).command(cmd)
+        elif parts[0] == "get" and len(parts) == 2 and parts[1] in cfg:
             reply = f"> {cfg[parts[1]]}"
         elif parts[0] == "set" and len(parts) == 3 and parts[1] in cfg:
             reply = self._set(cfg, parts[1], parts[2])
@@ -262,6 +347,22 @@ class SimTransport:
                 out(bytes([P.RESP_OK]))
             else:
                 out(bytes([P.RESP_ERR, 6]))
+        elif c == P.CMD_SET_FLOOD_SCOPE and len(b) >= 2:
+            self.send_scope = None if b[1] == 1 else bytes(b[2:18]) if len(b) >= 18 else b""
+            out(bytes([P.RESP_OK]))
+        elif c == P.CMD_SET_DEFAULT_FLOOD_SCOPE:
+            if len(b) >= 1 + 31 + 16:
+                name = P._cstr(b[1:32])
+                if not 0 < len(name) < 31:
+                    out(bytes([P.RESP_ERR, 6]))
+                    return
+                self.default_scope = (name, bytes(b[32:48]))
+            else:
+                self.default_scope = ("", b"")
+            out(bytes([P.RESP_OK]))
+        elif c == P.CMD_GET_DEFAULT_FLOOD_SCOPE:
+            name, key = self.default_scope
+            out(bytes([P.RESP_DEFAULT_FLOOD_SCOPE]) + (name.encode().ljust(31, b"\0") + key if name else b""))
         elif c == P.CMD_SET_PATH_HASH_MODE and len(b) >= 3 and b[1] == 0:
             if b[2] < 3:
                 self.path_hash_mode = b[2]
@@ -304,6 +405,7 @@ class SimTransport:
                 out(bytes([P.RESP_ERR, 2]))
                 return
             out(bytes([P.RESP_OK]))
+            self.sent_scopes.append(self.send_scope if self.send_scope != b"" else self.default_scope[1])
             self._copies(P.PAYLOAD_GRP_TXT, P.encrypt_group(self.channels[ch][1], ts, self.name, text))
         elif c == P.CMD_SEND_LOGIN:
             self._login(b)

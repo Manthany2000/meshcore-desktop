@@ -1,0 +1,15 @@
+MeshCore Desktop v1.2
+
+NEW
+
+Flood scopes (regions): Repeaters set up with regions only relay a scoped flood if they allow its region, so a scope keeps messages inside an area.
+
+Channel scope: Right-click a channel in Chats and choose Flood scope… to keep that channel's messages to a region, send them with no scope, or use the node's default. The chat header shows the scope. The app sets it on the node before each message; DMs and repeater logins use the node's default. If the node's firmware can't scope, a scoped message is marked failed rather than going out unscoped.
+
+Default scope: ⋯ → Default flood scope… sets the region the node's floods are kept to. It's saved on the node, and is also in the setup wizard on the Channels and Bluetooth page.
+
+Repeater regions: The Repeater tab has a new Regions page. It shows the repeater's region tree, which regions it allows floods for, its home region and default scope. Add or remove regions, allow or deny floods for each, set the home region and default scope, and Save so they last past a restart. Denying floods with no scope (*) asks first.
+
+Repeater settings: Max hops, unscoped (flood.max.unscoped) limits how far floods with no scope travel. The console presets add region, region home, region default and region save.
+
+Regions need repeater firmware 1.10 or later.

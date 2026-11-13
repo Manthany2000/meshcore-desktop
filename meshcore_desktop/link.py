@@ -11,7 +11,7 @@ from bleak import BleakClient, BleakScanner
 
 from . import pairing
 from . import protocol as P
-from .model import Model, Message
+from .model import NO_SCOPE, Message, Model
 
 log = logging.getLogger("link")
 
@@ -87,6 +87,9 @@ class Session:
         self._tasks: list[asyncio.Task] = []
         self.connected = False
         self.max_channels = 8
+        self.protocol = 0  # the node's FIRMWARE_VER_CODE
+        self._scope_lock = asyncio.Lock()
+        self._scope_now: str | None = None  # the override set on the node: "", NO_SCOPE, a region; None: unknown
         transport.on_frame = self._frame
         transport.on_disconnect = self._dropped
 
@@ -149,6 +152,12 @@ class Session:
         di = await self.request(P.device_query(), {"device_info"})
         if di and di.kind == "device_info":
             self.max_channels = di.max_channels or 8
+            self.protocol = di.protocol
+        self._scope_now = None
+        if self.scopes:
+            # Another app may have left a scope set: start from the node's default.
+            await self._set_scope("")
+            await self.request(P.simple(P.CMD_GET_DEFAULT_FLOOD_SCOPE), {"default_scope"})
         await self.request(P.simple(P.CMD_GET_DEVICE_TIME), {"time"})
         # Our clock is better than a node that lost power. It can only go forward.
         if self.model.node_now() < time.time() - 30:
@@ -225,15 +234,51 @@ class Session:
     async def _send(self, m: Message):
         if m.is_channel:
             frame = P.send_channel(m.channel, m.wire_time, m.text)
-            f = await self.request(frame, {"ok"})
+            f = await self.scoped(self.model.channel_scope(m.channel), frame, {"ok"})
         else:
             c = self.model.contacts.get(m.dm_prefix)
             if c and self.model.always_floods(c.prefix):
                 # The last reply will have taught the node a route; forget it so this one floods too.
                 await self.reset_path(c.key)
             frame = P.send_direct(m.dm_prefix, m.wire_time, m.text)
-            f = await self.request(frame, {"sent"})
+            f = await self.scoped("", frame, {"sent"})
         self.model.send_result(m, f)
+
+    # --- flood scopes ---------------------------------------------------------
+
+    @property
+    def scopes(self) -> bool:
+        """The node can scope floods to a region (protocol v8+)."""
+        return self.protocol >= 8
+
+    @property
+    def unscoped(self) -> bool:
+        """It can also send floods with no scope when it has a default (v12+)."""
+        return self.protocol >= 12
+
+    async def _set_scope(self, scope: str) -> P.Frame | None:
+        f = await self.request(P.set_flood_scope(None if scope == NO_SCOPE else scope), {"ok"})
+        self._scope_now = scope if f is not None and f.kind == "ok" else None
+        return f
+
+    async def scoped(self, scope: str, frame: bytes, expect: set[str], timeout: float = 8.0) -> P.Frame | None:
+        """Sends a command whose floods go out with this scope: "" for the node's
+        default, NO_SCOPE for none, or a region. If the node can't take a scope
+        we asked for, the command isn't sent: that gives the node's error."""
+        async with self._scope_lock:
+            if self.scopes and scope != self._scope_now:
+                f = await self._set_scope(scope)
+                if (f is None or f.kind != "ok") and scope:
+                    return f
+            elif scope and not self.scopes:
+                return P.Frame(P.RESP_ERR, "err", {"err": 1})  # unsupported
+            return await self.request(frame, expect, timeout)
+
+    async def set_default_scope(self, name: str) -> P.Frame | None:
+        """Saved on the node. Floods use it unless a channel says otherwise."""
+        f = await self.request(P.set_default_scope(name), {"ok"})
+        await self.request(P.simple(P.CMD_GET_DEFAULT_FLOOD_SCOPE), {"default_scope"})
+        return f
 
     # --- repeater admin -----------------------------------------------------
 
@@ -246,7 +291,7 @@ class Session:
             fut = asyncio.get_running_loop().create_future()
             self._admin_waiter = (done, fut)
             try:
-                sent = await self.request(frame, {"sent"})
+                sent = await self.scoped("", frame, {"sent"})
                 if sent is None or sent.kind == "err":
                     return sent
                 return await asyncio.wait_for(fut, max(self.admin_min_wait, sent.timeout_ms / 1000 + 3))

@@ -33,6 +33,7 @@ from . import serial_link
 from .serial_link import SerialTransport, is_serial
 from . import setup as node_setup
 from .setup_ui import SetupWizard
+from .scope_ui import ScopeDialog, scope_text
 from .model import (DELIVERED, FAILED, INCOMING, NO_ACK, SENDING, SENT, WAITING, Message, Model, chan_conv, dm_conv)
 
 log = logging.getLogger("ui")
@@ -602,6 +603,8 @@ class MainWindow(QMainWindow):
         adv.addAction("Flood (whole mesh)", lambda: self.run(self.session.advert(True), "Flood advert sent"))
         self.setup_act = m.addAction("Set up node…", self.setup_node)
         self.setup_act.setToolTip("Name, radio, position, channels and PIN")
+        self.scope_act = m.addAction("Default flood scope…", self.set_default_scope)
+        self.scope_act.setToolTip("The region the node's floods are kept to, unless a channel has its own")
         self.unpair_act = m.addAction("Forget pairing…", self.forget_pairing)
         self.unpair_act.setToolTip("Forget this computer's Bluetooth pairing with the node")
         m.addSeparator()
@@ -1019,6 +1022,7 @@ class MainWindow(QMainWindow):
         self.disconnect_act.setVisible(state != "disconnected")
         self.unpair_act.setEnabled(bool(self.address) and self.address not in SIMS and not is_serial(self.address))
         self.setup_act.setEnabled(ready)
+        self.scope_act.setEnabled(ready and bool(self.session and self.session.scopes))
         self.advert_btn.setEnabled(ready)
         self.admin.link_changed(state)
         self._count()
@@ -1057,6 +1061,8 @@ class MainWindow(QMainWindow):
             self._refresh_timer.start()
         elif ev in ("channels", "unread"):
             self._refresh_timer.start()
+        elif ev == "default_scope":
+            self._update_title()
         elif ev == "contacts":
             self._refresh_contacts()
             self._refresh_timer.start()
@@ -1289,8 +1295,30 @@ class MainWindow(QMainWindow):
         idx = int(conv[3:])
         m = QMenu(self)
         m.addAction("Mark read", lambda: self.model.mark_read(conv))
+        scope = m.addAction("Flood scope…", lambda: self.set_channel_scope(idx))
+        scope.setEnabled(bool(self.session and self.session.connected and self.session.scopes))
         m.addAction("Remove channel from node", lambda: self.remove_channel(idx))
         m.exec(self.chats.viewport().mapToGlobal(pos))
+
+    def set_channel_scope(self, idx: int):
+        name = self.model.conv_title(chan_conv(idx))
+        d = ScopeDialog(self, f"Flood scope for {name}", f"Which region should messages you send on <b>{html.escape(name)}"
+                        "</b> be kept to? This is kept on this computer for this node.",
+                        self.model.channel_scope(idx), self.model.default_scope,
+                        unscoped=self.session.unscoped)
+        if d.exec() and d.result_ is not None:
+            self.model.set_channel_scope(idx, d.result_)
+            self.toast(f"{name}: {scope_text(d.result_, self.model.default_scope)}")
+
+    def set_default_scope(self):
+        cur = self.model.default_scope or ""
+        d = ScopeDialog(self, "Default flood scope",
+                        "Which region should the node's floods be kept to? It's saved on the node, so other apps "
+                        "use it too. A channel can have its own (right-click it in Chats).",
+                        cur, for_channel=False)
+        if d.exec() and d.result_ is not None and d.result_ != cur:
+            self.run(self.session.set_default_scope(d.result_),
+                     f"Default scope: #{d.result_}" if d.result_ else "Default scope cleared")
 
     def add_channel(self):
         if not self.session or not self.session.connected:
@@ -1380,7 +1408,10 @@ class MainWindow(QMainWindow):
         self.title.setText(self.model.conv_title(self.conv) + (" ▾" if c else ""))
         if self.conv.startswith("ch:"):
             ch = self.model.channels.get(int(self.conv[3:]))
-            self.subtitle.setText(f"Channel {self.conv[3:]}" + ("" if ch else " (not on this node)"))
+            sub = f"Channel {self.conv[3:]}" + ("" if ch else " (not on this node)")
+            if ch and self.session and self.session.scopes:
+                sub += " · scope: " + scope_text(self.model.channel_scope(ch.idx), self.model.default_scope)
+            self.subtitle.setText(sub)
         else:
             c = self.model.contacts.get(bytes.fromhex(self.conv[3:]))
             if c:

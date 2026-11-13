@@ -118,6 +118,7 @@ class Plan:
     auto_add: bool | None = None
     pin: int | None = None  # 0: the firmware's default
     channels: list[tuple[str, bytes]] = field(default_factory=list)  # to add
+    default_scope: str | None = None  # a region, or "" to clear it
     advert: bool = True  # flood an advert when done, so the mesh learns the node
     reboot: bool = False
 
@@ -137,6 +138,9 @@ class Plan:
             out.append(bits[0][0].upper() + "; ".join(bits)[1:])
         for name, _s in self.channels:
             out.append(f"Join channel {name}")
+        if self.default_scope is not None:
+            out.append(f"Keep its floods to region #{self.default_scope}" if self.default_scope
+                       else "Clear its default flood scope")
         if self.tx_power is not None:
             out.append(f"Transmit at {self.tx_power} dBm")
         if self.hash_size is not None:
@@ -207,6 +211,8 @@ async def apply(session, plan: Plan, progress=lambda text, ok=None, why="": None
             all_ok = False
             continue
         await step(f"Joining {name}", session.set_channel(free[0], name, secret))
+    if plan.default_scope is not None:
+        await step("Setting the default flood scope", session.set_default_scope(plan.default_scope))
     if plan.tx_power is not None:
         await step(f"Setting transmit power to {plan.tx_power} dBm", session.request(P.set_tx_power(plan.tx_power), {"ok"}))
     if plan.hash_size is not None:
