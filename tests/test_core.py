@@ -5,7 +5,7 @@ import time
 from meshcore_desktop import protocol as P
 from meshcore_desktop import sim as S
 from meshcore_desktop.link import Session
-from meshcore_desktop.model import DELIVERED, SENT, WAITING, Model, chan_conv, dm_conv
+from meshcore_desktop.model import DELIVERED, FAILED, SENT, WAITING, Model, chan_conv, dm_conv
 
 
 def test_group_roundtrip():
@@ -153,4 +153,48 @@ def test_always_flood_resets_path_before_each_dm(tmp_path):
         third = Model(tmp_path)
         third.open_for_node(model.self_info.key)
         assert not third.always_floods(alice.prefix)
+    asyncio.run(go())
+
+
+def test_failed_or_stuck_write_never_leaves_a_message_sending(tmp_path):
+    async def go():
+        model = Model(tmp_path)
+        t = S.SimTransport()
+        states = []
+        s = Session(model, t, lambda st, d="": states.append((st, d)))
+        await s.start()
+        write = t.write
+
+        async def broken(b):
+            raise RuntimeError("GATT Protocol Error: Unlikely Error")
+        t.write = broken
+        m = await s.send(chan_conv(0), "won't go")
+        assert m.status == FAILED and s.connected  # an error alone keeps the link
+
+        async def stuck(b):
+            await asyncio.sleep(3600)
+        t.write = stuck
+        s.write_timeout = 0.2
+        m = await s.send(chan_conv(0), "hangs")
+        assert m.status == FAILED
+        assert not s.connected and states[-1] == ("disconnected", "node stopped responding")
+        assert await s.request(P.simple(P.CMD_GET_DEVICE_TIME), {"time"}) is None  # no writes once down
+
+        # A drop while a command waits for its answer fails that message too.
+        (tmp_path / "b").mkdir()
+        s2 = Session(Model(tmp_path / "b"), S.SimTransport())
+        await s2.start()
+        t2 = s2.t
+        w2 = t2.write
+
+        async def silent(b):  # sent, but the node never answers; then the link drops
+            if b[0] == P.CMD_SEND_CHANNEL_TXT_MSG:
+                asyncio.get_running_loop().call_later(0.1, s2._dropped)
+                return
+            await w2(b)
+        t2.write = silent
+        m = await s2.send(chan_conv(0), "dropped")
+        assert m.status == FAILED
+        await s.stop()
+        await s2.stop()
     asyncio.run(go())

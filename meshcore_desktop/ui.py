@@ -32,6 +32,7 @@ from .link import BleTransport, BondError, Session, scan
 from . import serial_link
 from .serial_link import SerialTransport, is_serial
 from . import setup as node_setup
+from .node_settings import NodeSettings
 from .setup_ui import SetupWizard
 from .scope_ui import ScopeDialog, scope_text
 from .model import (DELIVERED, FAILED, INCOMING, NO_ACK, SENDING, SENT, WAITING, Message, Model, chan_conv, dm_conv)
@@ -601,6 +602,9 @@ class MainWindow(QMainWindow):
         adv = self.advert_btn = m.addMenu("Send advert")
         adv.addAction("Zero-hop (neighbours only)", lambda: self.run(self.session.advert(False), "Advert sent"))
         adv.addAction("Flood (whole mesh)", lambda: self.run(self.session.advert(True), "Flood advert sent"))
+        self.settings_act = QAction("Node settings…", self, shortcut="Ctrl+,", triggered=self.node_settings)
+        self.settings_act.setToolTip("Name, position, radio, privacy, Bluetooth PIN and the node's details")
+        m.addAction(self.settings_act)
         self.setup_act = m.addAction("Set up node…", self.setup_node)
         self.setup_act.setToolTip("Name, radio, position, channels and PIN")
         self.scope_act = m.addAction("Default flood scope…", self.set_default_scope)
@@ -619,6 +623,7 @@ class MainWindow(QMainWindow):
             am.addAction(name, lambda n=name: self.set_accent(n))
         more.setMenu(m)
         self.addAction(self.details_act)  # so the shortcuts work with the menu closed
+        self.addAction(self.settings_act)
         self.addAction(self.compact_act)
         tb.addWidget(more)
 
@@ -972,6 +977,17 @@ class MainWindow(QMainWindow):
             return
         SetupWizard(self, self.session, is_serial(self.address)).open()
 
+    def node_settings(self):
+        if not self.session or not self.session.connected or not self.model.self_info:
+            return
+        if (open_ := self.findChild(NodeSettings)) is not None:
+            open_.raise_()
+            open_.activateWindow()
+            return
+        if self.findChild(SetupWizard):
+            return
+        NodeSettings(self, self.session, is_serial(self.address)).open()
+
     def _offer_setup(self):
         """Once per run for a node that's still as it was flashed, unless told not to."""
         si = self.model.self_info
@@ -1022,6 +1038,9 @@ class MainWindow(QMainWindow):
         self.disconnect_act.setVisible(state != "disconnected")
         self.unpair_act.setEnabled(bool(self.address) and self.address not in SIMS and not is_serial(self.address))
         self.setup_act.setEnabled(ready)
+        self.settings_act.setEnabled(ready)
+        if (ns := self.findChild(NodeSettings)) is not None:
+            ns.link_changed(self.session, state)
         self.scope_act.setEnabled(ready and bool(self.session and self.session.scopes))
         self.advert_btn.setEnabled(ready)
         self.admin.link_changed(state)

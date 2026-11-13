@@ -111,3 +111,29 @@ def test_reboot_drops_the_link(tmp_path):
         await asyncio.sleep(0.4)
         assert t.reboots == 1 and states[-1] == ("disconnected", "link dropped")
     asyncio.run(go())
+
+
+def test_telemetry_byte_packs_two_bits_per_kind():
+    assert S.telemetry_modes(0b100110) == {"base": 2, "location": 1, "environment": 2}
+    assert S.telemetry_byte({"base": 2, "location": 1, "environment": 2}) == 0b100110
+    # Kinds left out keep the old bits, and so do the two spare bits on top.
+    assert S.telemetry_byte({"location": 0}, 0b11000110) == 0b11000010
+
+
+def test_privacy_options_keep_the_others_as_they_were(tmp_path):
+    async def go():
+        model = Model(tmp_path)
+        t = sim.SimTransport(fresh=True)
+        s = Session(model, t)
+        await s.start()
+        await S.apply(s, S.Plan(share_location=True, auto_add=False, advert=False))
+        plan = S.Plan(telemetry=S.telemetry_byte({"base": 2, "location": 0, "environment": 1}), multi_acks=True,
+                      advert=False)
+        assert any("Answer requests for readings" in x for x in plan.steps())
+        assert await S.apply(s, plan)
+        si = model.self_info
+        assert S.telemetry_modes(si.telemetry) == {"base": 2, "location": 0, "environment": 1}
+        assert si.multi_acks == 1
+        assert si.loc_policy == 1 and si.manual_add & 1  # untouched by the second plan
+        await s.stop()
+    asyncio.run(go())

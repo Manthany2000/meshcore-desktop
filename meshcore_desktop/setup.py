@@ -64,6 +64,25 @@ def find_preset(freq: float, bw: float, sf: int, cr: int, hash_size: int | None 
     return (exact or hits or [None])[0]
 
 
+# Who the node answers telemetry requests from, one setting per kind of reading,
+# two bits each in the telemetry byte: base (battery) in bits 0-1, location in
+# 2-3, environment sensors in 4-5. (TELEM_MODE_* in the companion firmware.)
+TELEMETRY_KINDS = ("base", "location", "environment")
+TELEMETRY_MODES = {0: "Nobody", 1: "Only contacts I allow", 2: "Anyone"}
+
+
+def telemetry_modes(byte: int) -> dict[str, int]:
+    return {k: (byte >> (2 * i)) & 3 for i, k in enumerate(TELEMETRY_KINDS)}
+
+
+def telemetry_byte(modes: dict[str, int], old: int = 0) -> int:
+    """Packs the modes back, keeping the old byte's bits for any kind not given."""
+    out = old & ~0x3F
+    for i, k in enumerate(TELEMETRY_KINDS):
+        out |= (modes.get(k, (old >> (2 * i)) & 3) & 3) << (2 * i)
+    return out
+
+
 def is_fresh(self_info) -> bool:
     """A node nobody has set up yet still has the name the firmware gave it on
     first boot: the first four bytes of its key in hex."""
@@ -116,6 +135,8 @@ class Plan:
     location: tuple[float, float] | None = None
     share_location: bool | None = None
     auto_add: bool | None = None
+    telemetry: int | None = None  # the packed byte; see telemetry_byte()
+    multi_acks: bool | None = None
     pin: int | None = None  # 0: the firmware's default
     channels: list[tuple[str, bytes]] = field(default_factory=list)  # to add
     default_scope: str | None = None  # a region, or "" to clear it
@@ -136,6 +157,12 @@ class Plan:
             if self.auto_add is not None:
                 bits.append("add contacts as they're heard" if self.auto_add else "add contacts only by hand")
             out.append(bits[0][0].upper() + "; ".join(bits)[1:])
+        if self.telemetry is not None:
+            modes = telemetry_modes(self.telemetry)
+            out.append("Answer requests for readings — " + ", ".join(
+                f"{k}: {TELEMETRY_MODES.get(m, f'mode {m}').lower()}" for k, m in modes.items()))
+        if self.multi_acks is not None:
+            out.append("Send an extra ack for each direct message" if self.multi_acks else "Send one ack per direct message")
         for name, _s in self.channels:
             out.append(f"Join channel {name}")
         if self.default_scope is not None:
@@ -193,7 +220,7 @@ async def apply(session, plan: Plan, progress=lambda text, ok=None, why="": None
         await step(f"Naming it “{plan.name}”", session.request(P.set_name(plan.name), {"ok"}))
     if plan.location is not None:
         await step("Setting its position", session.request(P.set_latlon(*plan.location), {"ok"}))
-    if plan.share_location is not None or plan.auto_add is not None:
+    if any(x is not None for x in (plan.share_location, plan.auto_add, plan.telemetry, plan.multi_acks)):
         # One command sets all four, so the ones we don't change go back as they were.
         manual = si.manual_add if si else 0
         if plan.auto_add is not None:
@@ -201,9 +228,10 @@ async def apply(session, plan: Plan, progress=lambda text, ok=None, why="": None
         policy = si.loc_policy if si else 0
         if plan.share_location is not None:
             policy = 1 if plan.share_location else 0
-        await step("Setting contact and position options",
-                   session.request(P.set_other_params(manual, si.telemetry if si else 0, policy,
-                                                      si.multi_acks if si else 0), {"ok"}))
+        telemetry = plan.telemetry if plan.telemetry is not None else (si.telemetry if si else 0)
+        multi = int(plan.multi_acks) if plan.multi_acks is not None else (si.multi_acks if si else 0)
+        await step("Setting contact, position and privacy options",
+                   session.request(P.set_other_params(manual, telemetry, policy, multi), {"ok"}))
     for name, secret in plan.channels:
         free = [i for i in range(session.max_channels) if i not in model.channels]
         if not free:

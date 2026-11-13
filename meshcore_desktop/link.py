@@ -125,18 +125,37 @@ class Session:
 
     _syncing_backlog = False
 
+    write_timeout = 10.0  # seconds; a write stuck longer than this means the link is dead
+
     async def request(self, frame: bytes, expect: set[str], timeout: float = 8.0) -> P.Frame | None:
         """Sends a command and waits for its answer: one of expect, or an error.
-        None if nothing came."""
+        None if nothing came, the write failed, or the link is down. Never hangs:
+        a write that doesn't finish drops the link, so the UI reconnects."""
         async with self._lock:
+            if not self.connected:
+                return None
             fut = asyncio.get_running_loop().create_future()
             self._waiter = (expect, fut)
             try:
-                await self.t.write(frame)
+                try:
+                    await asyncio.wait_for(self.t.write(frame), self.write_timeout)
+                except asyncio.TimeoutError:
+                    log.warning("write of command %d stuck: dropping the link", frame[0])
+                    self._link_lost("node stopped responding")
+                    return None
+                except Exception as e:
+                    log.warning("write of command %d failed: %s", frame[0], e or e.__class__.__name__)
+                    return None
                 return await asyncio.wait_for(fut, timeout)
             except asyncio.TimeoutError:
                 log.warning("no answer to command %d", frame[0])
                 return None
+            except asyncio.CancelledError:
+                # The link dropped while we waited (it cancels our future): answer None.
+                # A cancel of the calling task itself still goes through.
+                if fut.cancelled() and not asyncio.current_task().cancelling():
+                    return None
+                raise
             finally:
                 self._waiter = None
 
@@ -199,7 +218,7 @@ class Session:
             if n % 60 == 0:
                 await self.request(P.simple(P.CMD_GET_BATT_AND_STORAGE), {"battery"})
 
-    def _dropped(self):
+    def _dropped(self, why: str = "link dropped"):
         if not self.connected:
             return
         self.connected = False
@@ -207,7 +226,19 @@ class Session:
             t.cancel()
         if self._waiter and not self._waiter[1].done():
             self._waiter[1].cancel()
-        self.on_state("disconnected", "link dropped")
+        self.on_state("disconnected", why)
+
+    def _link_lost(self, why: str):
+        """The transport still says it's up but has stopped working: drop it
+        ourselves so pending commands end and the UI reconnects."""
+        self._dropped(why)
+
+        async def close():
+            try:
+                await asyncio.wait_for(self.t.close(), 10)
+            except Exception as e:
+                log.warning("closing the dead link: %s", e or e.__class__.__name__)
+        self._closing = asyncio.create_task(close())
 
     async def stop(self):
         self.connected = False

@@ -1,0 +1,11 @@
+MeshCore Desktop v1.3
+
+NEW
+
+Node settings: ⋯ → Node settings… (Ctrl+,) opens the node's settings on tabs: General, Radio, Privacy, Bluetooth and scope, and About. You can open it any time, not only for a new node. Fields start with the node's current values, and Apply sends only what you changed. Privacy also sets who the node shares its readings with (battery, location and environment sensors) and multi-acks.
+
+FIXED
+
+Messages stuck on "sending": If a Bluetooth write to the node hung, every message after it stayed on "sending" and nothing was logged. A write that doesn't finish within 10 seconds now drops the link, the app reconnects on its own, and the message is marked failed so you can resend it.
+
+Send errors: A message whose write to the node fails (such as "GATT Protocol Error: Unlikely Error"), or whose link drops before the node answers, is now marked failed instead of staying on "sending".
